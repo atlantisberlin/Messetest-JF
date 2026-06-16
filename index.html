@@ -246,22 +246,30 @@ function renderPrep() {
     const toOrder=qty>art.stock?qty-art.stock:0;
     const offen=qty-comm;
 
-    // Status-Badge
-    let statusHTML="";
-    if(qty>0){
-      if(done){
-        statusHTML=`<span class="badge ok" style="margin-left:6px;"><i class="ti ti-check" style="font-size:10px;"></i> Kommissioniert (${comm})</span>`;
-      } else if(comm>0 && offen>0){
-        statusHTML=`<span class="badge warn" style="margin-left:6px;"><i class="ti ti-clock" style="font-size:10px;"></i> Teilw. komm. (${comm}/${qty})</span>`;
-      } else {
-        statusHTML=`<span class="badge" style="margin-left:6px;background:var(--info-bg);color:var(--info);">
-          <i class="ti ti-flag" style="font-size:10px;"></i> Ausgewählt (${qty})</span>`;
-      }
-    }
-
     const card=document.createElement("div");
     card.className="card";
-    if(qty>0) card.style.borderColor = done ? "var(--ok)" : "var(--info)";
+    if(qty>0) card.style.borderColor = (offen===0&&qty>0) ? "var(--ok)" : "var(--info)";
+
+    const stockBadge = qty>0
+      ? `<span class="badge ${canCommit?"ok":"warn"}">${canCommit?"✓ im Lager":toOrder+" bestellen"}</span>`
+      : "";
+
+    const statusRow = qty>0 ? `
+      <div style="margin-top:10px;padding-top:8px;border-top:0.5px solid var(--border);
+        display:flex;flex-wrap:wrap;gap:6px;font-size:11px;">
+        <span style="padding:2px 8px;border-radius:12px;background:var(--info-bg);color:var(--info);">
+          <i class="ti ti-flag" style="font-size:10px;"></i> Messeartikel</span>
+        <span style="padding:2px 8px;border-radius:12px;background:var(--bg2);color:var(--text2);">
+          Geplant: ${qty}</span>
+        ${toOrder>0?`<span style="padding:2px 8px;border-radius:12px;background:var(--warn-bg);color:var(--warn);">
+          ${toOrder} bestellen</span>`:""}
+        <span style="padding:2px 8px;border-radius:12px;background:var(--ok-bg);color:var(--ok);">
+          Komm.: ${comm}</span>
+        <span style="padding:2px 8px;border-radius:12px;background:${offen>0?"var(--warn-bg)":"var(--ok-bg)"};
+          color:${offen>0?"var(--warn)":"var(--ok)"};">
+          Offen: ${offen}</span>
+      </div>` : "";
+
     card.innerHTML=`
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
         <div style="flex:1;min-width:0;padding-right:8px;">
@@ -278,15 +286,9 @@ function renderPrep() {
         <span class="muted">Menge:</span>
         <input type="number" min="0" value="${qty||""}" placeholder="0"
           style="width:72px;text-align:center;" data-id="${art.id}" />
-        ${qty>0 ? `<span class="badge ${canCommit?"ok":"warn"}">${canCommit?"✓ verfügbar":toOrder+" bestellen"}</span>` : ""}
-        ${statusHTML}
+        ${stockBadge}
       </div>
-      ${qty>0 && !done ? `
-      <div style="margin-top:8px;display:flex;gap:12px;font-size:12px;">
-        <span style="color:var(--info);"><i class="ti ti-flag" style="font-size:11px;"></i> Ausgewählt: ${qty}</span>
-        <span style="color:var(--ok);"><i class="ti ti-packages" style="font-size:11px;"></i> Kommissioniert: ${comm}</span>
-        ${offen>0?`<span style="color:var(--warn);"><i class="ti ti-clock" style="font-size:11px;"></i> Offen: ${offen}</span>`:""}
-      </div>` : ""}`;
+      ${statusRow}`;
     wrap.appendChild(card);
     const inp=card.querySelector("input");
     inp.addEventListener("change",e=>{
@@ -352,12 +354,14 @@ function renderWarehouse() {
     wrap.querySelectorAll(".btn-commit").forEach(b=>b.addEventListener("click",()=>{
       const id=parseInt(b.dataset.id);
       const art=articles.find(a=>a.id===id);
-      const qty=planned[id]||0;
-      if(!qty) return;
-      commitDone[id]=true;
-      committed[id]=(committed[id]||0)+qty;
+      const inp=b.closest(".card").querySelector(".inp-wh-qty");
+      const entnahme=Math.max(1,parseInt(inp?.value)||0);
+      const neuComm=(committed[id]||0)+entnahme;
+      committed[id]=neuComm;
+      // Als "Erledigt" markieren wenn geplante Menge erreicht oder überschritten
+      if(neuComm>=planned[id]) commitDone[id]=true;
       saveState();
-      showNotification(`${qty}× ${art.name} kommissioniert`);
+      showNotification(`${entnahme}× ${art.name} ins Messelager gebucht`);
       renderWarehouse();
     }));
 
