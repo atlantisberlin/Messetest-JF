@@ -240,10 +240,28 @@ function renderPrep() {
   wrap.innerHTML=`<p class="muted" style="margin-bottom:12px;">Sollmengen für die Messe festlegen.</p>`;
   articles.forEach(art=>{
     const qty=planned[art.id]||0;
+    const comm=committed[art.id]||0;
+    const done=commitDone[art.id]||false;
     const canCommit=art.stock>=qty;
     const toOrder=qty>art.stock?qty-art.stock:0;
+    const offen=qty-comm;
+
+    // Status-Badge
+    let statusHTML="";
+    if(qty>0){
+      if(done){
+        statusHTML=`<span class="badge ok" style="margin-left:6px;"><i class="ti ti-check" style="font-size:10px;"></i> Kommissioniert (${comm})</span>`;
+      } else if(comm>0 && offen>0){
+        statusHTML=`<span class="badge warn" style="margin-left:6px;"><i class="ti ti-clock" style="font-size:10px;"></i> Teilw. komm. (${comm}/${qty})</span>`;
+      } else {
+        statusHTML=`<span class="badge" style="margin-left:6px;background:var(--info-bg);color:var(--info);">
+          <i class="ti ti-flag" style="font-size:10px;"></i> Ausgewählt (${qty})</span>`;
+      }
+    }
+
     const card=document.createElement("div");
     card.className="card";
+    if(qty>0) card.style.borderColor = done ? "var(--ok)" : "var(--info)";
     card.innerHTML=`
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
         <div style="flex:1;min-width:0;padding-right:8px;">
@@ -256,54 +274,79 @@ function renderPrep() {
           <div style="font-weight:500;">${art.stock}</div>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span class="muted">Menge:</span>
         <input type="number" min="0" value="${qty||""}" placeholder="0"
           style="width:72px;text-align:center;" data-id="${art.id}" />
-        ${qty>0?`<span class="badge ${canCommit?"ok":"warn"}">${canCommit?"✓ verfügbar":toOrder+" bestellen"}</span>`:""}
-      </div>`;
+        ${qty>0 ? `<span class="badge ${canCommit?"ok":"warn"}">${canCommit?"✓ verfügbar":toOrder+" bestellen"}</span>` : ""}
+        ${statusHTML}
+      </div>
+      ${qty>0 && !done ? `
+      <div style="margin-top:8px;display:flex;gap:12px;font-size:12px;">
+        <span style="color:var(--info);"><i class="ti ti-flag" style="font-size:11px;"></i> Ausgewählt: ${qty}</span>
+        <span style="color:var(--ok);"><i class="ti ti-packages" style="font-size:11px;"></i> Kommissioniert: ${comm}</span>
+        ${offen>0?`<span style="color:var(--warn);"><i class="ti ti-clock" style="font-size:11px;"></i> Offen: ${offen}</span>`:""}
+      </div>` : ""}`;
     wrap.appendChild(card);
     const inp=card.querySelector("input");
-    inp.addEventListener("change", e=>{
+    inp.addEventListener("change",e=>{
       planned[art.id]=Math.max(0,parseInt(e.target.value)||0);
       saveState(); renderPrep();
     });
-    inp.addEventListener("keydown", e=>{ if(e.key==="Enter") e.target.blur(); });
+    inp.addEventListener("keydown",e=>{ if(e.key==="Enter") e.target.blur(); });
   });
 }
 
 // ── KOMMISSIONIERUNG ─────────────────────────────────────────────────────
 function renderWarehouse() {
   const wrap=qs("#view-warehouse");
-  wrap.innerHTML=`<p class="muted" style="margin-bottom:12px;">Artikel entnehmen & bestätigen. Bereits bestätigte Positionen können korrigiert werden.</p>`;
+  wrap.innerHTML=`<p class="muted" style="margin-bottom:12px;">Menge prüfen, entnehmen & bestätigen. Bestätigte Positionen können korrigiert werden.</p>`;
 
   const toCommit=articles.filter(a=>(planned[a.id]||0)>0);
   if(toCommit.length===0){
     wrap.innerHTML+=`<div style="text-align:center;padding:24px 0;" class="muted">Noch keine Artikel in der Vorbereitung geplant.</div>`;
   } else {
     toCommit.forEach(art=>{
-      const qty=planned[art.id], done=commitDone[art.id];
+      const qty=planned[art.id]||0;
+      const done=commitDone[art.id];
       const card=document.createElement("div");
       card.className="card";
       card.style.border=`0.5px solid ${done?"var(--ok)":"var(--border)"}`;
       card.style.opacity=done?"0.8":"1";
-      card.innerHTML=`
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div style="flex:1;min-width:0;padding-right:8px;">
-            <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${art.name}</div>
-            <div class="muted">${art.sku} · <strong style="color:var(--text)">${qty}× entnehmen</strong></div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
-            ${done
-              ? `<span style="font-size:13px;color:var(--ok);display:flex;align-items:center;gap:4px;"><i class="ti ti-check"></i> Erledigt</span>
-                 <button class="btn-sm btn-undo" data-id="${art.id}" title="Kommissionierung rückgängig machen">
-                   <i class="ti ti-arrow-back-up"></i> Korrigieren
-                 </button>`
-              : `<button class="btn btn-commit" data-id="${art.id}">Bestätigen</button>`
-            }
-          </div>
-        </div>`;
+
+      if(done){
+        card.innerHTML=`
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="flex:1;min-width:0;padding-right:8px;">
+              <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${art.name}</div>
+              <div class="muted">${art.sku} · <strong style="color:var(--ok)">${committed[art.id]}× kommissioniert</strong></div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
+              <span style="font-size:13px;color:var(--ok);display:flex;align-items:center;gap:4px;"><i class="ti ti-check"></i> Erledigt</span>
+              <button class="btn-sm btn-undo" data-id="${art.id}"><i class="ti ti-arrow-back-up"></i> Korrigieren</button>
+            </div>
+          </div>`;
+      } else {
+        card.innerHTML=`
+          <div style="margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;font-size:13px;">${art.name}</div>
+          <div class="muted" style="margin-bottom:10px;">${art.sku} · Lager: ${art.stock}</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <label class="muted" style="white-space:nowrap;">Menge entnehmen:</label>
+            <input type="number" class="inp-wh-qty" min="1" value="${qty}" data-id="${art.id}"
+              style="width:72px;text-align:center;" />
+            <button class="btn btn-commit" data-id="${art.id}" style="white-space:nowrap;">Bestätigen</button>
+          </div>`;
+      }
       wrap.appendChild(card);
+    });
+
+    wrap.querySelectorAll(".inp-wh-qty").forEach(inp=>{
+      inp.addEventListener("change",()=>{
+        const id=parseInt(inp.dataset.id);
+        planned[id]=Math.max(1,parseInt(inp.value)||1);
+        saveState();
+      });
+      inp.addEventListener("keydown",e=>{ if(e.key==="Enter") e.target.blur(); });
     });
 
     wrap.querySelectorAll(".btn-commit").forEach(b=>b.addEventListener("click",()=>{
