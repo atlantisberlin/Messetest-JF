@@ -239,9 +239,12 @@ function renderPrep() {
         ${qty > 0 ? `<span class="badge ${canCommit?"ok":"warn"}">${canCommit?"✓ verfügbar":toOrder+" bestellen"}</span>` : ""}
       </div>`;
     wrap.appendChild(card);
-    card.querySelector("input").addEventListener("input", e => {
+    card.querySelector("input").addEventListener("change", e => {
       planned[art.id] = Math.max(0, parseInt(e.target.value)||0);
       renderPrep();
+    });
+    card.querySelector("input").addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.target.blur(); }
     });
   });
 }
@@ -402,7 +405,7 @@ function renderSales() {
     activeList.items = activeList.items.filter(i=>i.id!==parseInt(b.dataset.id));
     renderSales();
   }));
-  wrap.querySelectorAll(".inp-qty").forEach(inp => inp.addEventListener("input", () => {
+  wrap.querySelectorAll(".inp-qty").forEach(inp => inp.addEventListener("change", () => {
     const it = activeList.items.find(i=>i.id===parseInt(inp.dataset.id));
     if (it) { it.qty = Math.max(1, parseInt(inp.value)||1); renderSales(); }
   }));
