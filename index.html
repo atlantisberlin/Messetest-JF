@@ -72,6 +72,9 @@
       <button id="btn-reload" class="btn" style="font-size:12px;padding:3px 8px;display:none;align-items:center;gap:4px;">
         <i class="ti ti-refresh"></i> <span id="art-count">0</span>
       </button>
+      <button id="btn-settings" class="btn" style="font-size:12px;padding:3px 8px;">
+        <i class="ti ti-settings"></i>
+      </button>
       <button class="pill role-btn" data-role="standard">Verkäufer</button>
       <button class="pill role-btn" data-role="supervisor">Supervisor</button>
     </div>
@@ -88,6 +91,18 @@
       <button class="tab" data-tab="warehouse"><i class="ti ti-packages"></i>Kommission</button>
       <button class="tab" data-tab="sales"><i class="ti ti-shopping-cart"></i>Verkauf</button>
     </div>
+    <div id="settings-panel" style="display:none;padding:12px 16px;border-bottom:0.5px solid var(--border);background:var(--bg2);">
+      <div style="font-size:13px;font-weight:500;margin-bottom:10px;">Einstellungen</div>
+      <label class="muted" style="display:block;margin-bottom:2px;">Messe-Bezeichnung</label>
+      <input type="text" id="inp-messe-label" placeholder="z.B. Boot Düsseldorf 2026" style="margin-bottom:8px;" />
+      <label class="muted" style="display:block;margin-bottom:2px;">Webhook-URL (Google Apps Script)</label>
+      <input type="text" id="inp-webhook" placeholder="https://script.google.com/macros/s/..." style="margin-bottom:8px;" />
+      <div style="display:flex;gap:8px;">
+        <button id="btn-save-settings" class="btn" style="flex:1;">Speichern</button>
+        <button id="btn-test-webhook" class="btn" style="flex:1;">Webhook testen</button>
+      </div>
+      <div id="webhook-status" style="margin-top:6px;font-size:12px;"></div>
+    </div>
     <div id="notification" style="display:none;margin:8px 16px 0;"></div>
     <div id="view-prep"></div>
     <div id="view-warehouse"></div>
@@ -99,6 +114,8 @@
 // ── CONFIG ───────────────────────────────────────────────────────────────
 const DEFAULT_SHEET_ID = "11Pzm0vNCKUC883rhTftRAD1SzW8CdXo30tZPSu0iYEw";
 const STORE_KEY = "messetool_v1";
+// Nach dem Deployen des Apps Scripts hier die Web-App-URL eintragen:
+let WEBHOOK_URL = localStorage.getItem("messetool_webhook") || "";
 
 function getSheetId() {
   return new URLSearchParams(location.search).get("sheet") || DEFAULT_SHEET_ID;
@@ -107,7 +124,7 @@ function getSheetId() {
 // ── PERSISTENZ ───────────────────────────────────────────────────────────
 function saveState() {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify({ planned, committed, commitDone, commitHistory, salesLists, activeListId, role }));
+    localStorage.setItem(STORE_KEY, JSON.stringify({ planned, committed, commitDone, commitHistory, salesLists, activeListId, role, messeLabel }));
   } catch(e) {}
 }
 
@@ -121,8 +138,8 @@ function loadState() {
     committed     = objIntKeys(s.committed    || {});
     commitDone    = objIntKeys(s.commitDone   || {});
     commitHistory = objIntKeys(s.commitHistory|| {});
-    salesLists    = s.salesLists || [];
-    activeListId = s.activeListId || null;
+    salesLists    = s.salesLists  || [];
+    messeLabel    = s.messeLabel  || "";
     if (s.role) {
       role = s.role;
       document.querySelectorAll(".role-btn").forEach(b => b.classList.toggle("active", b.dataset.role === role));
@@ -353,7 +370,7 @@ function renderWarehouse() {
       inp.addEventListener("keydown",e=>{ if(e.key==="Enter") e.target.blur(); });
     });
 
-    wrap.querySelectorAll(".btn-commit").forEach(b=>b.addEventListener("click",()=>{
+    wrap.querySelectorAll(".btn-commit").forEach(b=>b.addEventListener("click",async ()=>{
       const id=parseInt(b.dataset.id);
       const art=articles.find(a=>a.id===id);
       const card=b.closest(".card");
@@ -367,6 +384,25 @@ function renderWarehouse() {
       saveState();
       showNotification(`${entnahme}× ${art.name}${ref?" → "+ref:""} ins Messelager gebucht`);
       renderWarehouse();
+      // Webhook → Google Sheets
+      if(WEBHOOK_URL) {
+        try {
+          await fetch(WEBHOOK_URL, {
+            method:"POST", mode:"no-cors",
+            headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({
+              messe:     messeLabel,
+              sku:       art.sku,
+              ean:       art.ean,
+              name:      art.name,
+              qty:       entnahme,
+              ref:       ref,
+              planned:   planned[id]||0,
+              committed: committed[id]||0
+            })
+          });
+        } catch(e) { console.warn("Webhook fehlgeschlagen:", e); }
+      }
     }));
 
     wrap.querySelectorAll(".btn-undo").forEach(b=>b.addEventListener("click",()=>{
@@ -549,6 +585,37 @@ function renderSales(){
 }
 
 // ── EVENTS ───────────────────────────────────────────────────────────────
+qs("#btn-settings").addEventListener("click",()=>{
+  const panel=qs("#settings-panel");
+  const open=panel.style.display==="none";
+  panel.style.display=open?"block":"none";
+  if(open){
+    qs("#inp-messe-label").value=messeLabel;
+    qs("#inp-webhook").value=WEBHOOK_URL;
+  }
+});
+qs("#btn-save-settings").addEventListener("click",()=>{
+  messeLabel=qs("#inp-messe-label").value.trim();
+  WEBHOOK_URL=qs("#inp-webhook").value.trim();
+  localStorage.setItem("messetool_webhook", WEBHOOK_URL);
+  saveState();
+  qs("#settings-panel").style.display="none";
+  showNotification("Einstellungen gespeichert");
+});
+qs("#btn-test-webhook").addEventListener("click",async ()=>{
+  const url=qs("#inp-webhook").value.trim();
+  const status=qs("#webhook-status");
+  if(!url){status.textContent="Bitte zuerst eine URL eingeben.";status.style.color="var(--warn)";return;}
+  status.textContent="Teste…";status.style.color="var(--text2)";
+  try {
+    await fetch(url,{method:"GET",mode:"no-cors"});
+    status.textContent="✓ Webhook erreichbar (no-cors – Details im Apps Script prüfen)";
+    status.style.color="var(--ok)";
+  } catch(e) {
+    status.textContent="✗ Nicht erreichbar: "+e.message;
+    status.style.color="var(--err)";
+  }
+});
 document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
   currentView=t.dataset.tab; renderView();
 }));
