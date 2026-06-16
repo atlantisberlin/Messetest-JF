@@ -107,7 +107,7 @@ function getSheetId() {
 // ── PERSISTENZ ───────────────────────────────────────────────────────────
 function saveState() {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify({ planned, committed, commitDone, salesLists, activeListId, role }));
+    localStorage.setItem(STORE_KEY, JSON.stringify({ planned, committed, commitDone, commitHistory, salesLists, activeListId, role }));
   } catch(e) {}
 }
 
@@ -117,10 +117,11 @@ function loadState() {
     if (!raw) return;
     const s = JSON.parse(raw);
     // Restore with integer keys
-    planned    = objIntKeys(s.planned    || {});
-    committed  = objIntKeys(s.committed  || {});
-    commitDone = objIntKeys(s.commitDone || {});
-    salesLists = s.salesLists || [];
+    planned       = objIntKeys(s.planned      || {});
+    committed     = objIntKeys(s.committed    || {});
+    commitDone    = objIntKeys(s.commitDone   || {});
+    commitHistory = objIntKeys(s.commitHistory|| {});
+    salesLists    = s.salesLists || [];
     activeListId = s.activeListId || null;
     if (s.role) {
       role = s.role;
@@ -141,6 +142,7 @@ let role = "standard";
 let planned    = {};
 let committed  = {};
 let commitDone = {};
+let commitHistory = {}; // { artId: [{qty, ref, time}] }
 let salesLists = [];
 let activeListId = null;
 let currentView = "prep";
@@ -354,14 +356,16 @@ function renderWarehouse() {
     wrap.querySelectorAll(".btn-commit").forEach(b=>b.addEventListener("click",()=>{
       const id=parseInt(b.dataset.id);
       const art=articles.find(a=>a.id===id);
-      const inp=b.closest(".card").querySelector(".inp-wh-qty");
-      const entnahme=Math.max(1,parseInt(inp?.value)||0);
-      const neuComm=(committed[id]||0)+entnahme;
-      committed[id]=neuComm;
-      // Als "Erledigt" markieren wenn geplante Menge erreicht oder überschritten
-      if(neuComm>=planned[id]) commitDone[id]=true;
+      const card=b.closest(".card");
+      const entnahme=Math.max(1,parseInt(card.querySelector(".inp-wh-qty")?.value)||1);
+      const ref=(card.querySelector(".inp-wh-ref")?.value||"").trim();
+      const now=new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});
+      committed[id]=(committed[id]||0)+entnahme;
+      if(!commitHistory[id]) commitHistory[id]=[];
+      commitHistory[id].push({qty:entnahme, ref, time:now});
+      if(committed[id]>=(planned[id]||0)) commitDone[id]=true;
       saveState();
-      showNotification(`${entnahme}× ${art.name} ins Messelager gebucht`);
+      showNotification(`${entnahme}× ${art.name}${ref?" → "+ref:""} ins Messelager gebucht`);
       renderWarehouse();
     }));
 
@@ -371,8 +375,8 @@ function renderWarehouse() {
       const qty=planned[id]||0;
       if(!confirm(`Kommissionierung von ${qty}× "${art.name}" rückgängig machen?`)) return;
       delete commitDone[id];
-      committed[id]=Math.max(0,(committed[id]||0)-qty);
-      if(committed[id]===0) delete committed[id];
+      delete committed[id];
+      delete commitHistory[id];
       saveState();
       showNotification(`${art.name} zurückgesetzt`,"warn");
       renderWarehouse();
