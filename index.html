@@ -139,8 +139,15 @@
 <script>
 // ── KONFIGURATION ──────────────────────────────────────────────────────────
 // Spaltenreihenfolge im Google Sheet (0-basiert, Zeile 1 = Header):
-// SKU · EAN · NAME · KATEGORIE · EKNETTO · UVPBRUTTO · VKBRUTTO · MINDESTVK · LIEFERANT · QUANTITY · IMAGE · PRODUCTS_ID · MASTER_ID
-const COL = { SKU:0, EAN:1, NAME:2, KATEGORIE:3, EKNETTO:4, UVPBRUTTO:5, VKBRUTTO:6, MINDESTVK:7, LIEFERANT:8, QUANTITY:9, IMAGE:10, PRODUCTS_ID:11, MASTER_ID:12 };
+// SKU · EAN · NAME · KATEGORIE · EKNETTO · UVPBRUTTO · VKBRUTTO · MINDESTVK · LIEFERANT
+// · IMAGE_GROSS · IMAGE_NORMAL · IMAGE_MINI · PRODUCTS_ID · MASTER_ID
+// · ZL · CO · ST · FB · HH
+const COL = {
+  SKU:0, EAN:1, NAME:2, KATEGORIE:3, EKNETTO:4, UVPBRUTTO:5, VKBRUTTO:6, MINDESTVK:7, LIEFERANT:8,
+  IMAGE_GROSS:9, IMAGE_NORMAL:10, IMAGE_MINI:11,
+  PRODUCTS_ID:12, MASTER_ID:13,
+  ZL:14, CO:15, ST:16, FB:17, HH:18
+};
 
 const qs = s => document.querySelector(s);
 
@@ -222,21 +229,29 @@ async function loadSheet() {
 
     articles = rows.slice(1)
       .filter(r => r[COL.SKU] && r[COL.SKU].trim())
-      .map(r => ({
-        sku:        r[COL.SKU].trim(),
-        ean:        r[COL.EAN]?.trim()        || "",
-        name:       r[COL.NAME]?.trim()       || "",
-        category:   r[COL.KATEGORIE]?.trim()  || "",
-        costPrice:  parseFloat(r[COL.EKNETTO])    || 0,
-        uvp:        parseFloat(r[COL.UVPBRUTTO])  || 0,
-        price:      parseFloat(r[COL.VKBRUTTO])   || 0,
-        minPrice:   parseFloat(r[COL.MINDESTVK])  || 0,
-        supplier:   r[COL.LIEFERANT]?.trim()  || "",
-        stock:      parseInt(r[COL.QUANTITY])     || 0,
-        image:      r[COL.IMAGE]?.trim()      || "",
-        productsId: r[COL.PRODUCTS_ID]?.trim() || "",
-        masterId:   r[COL.MASTER_ID]?.trim()   || "",  // SKU des Masters, leer wenn kein Slave
-      }));
+      .map(r => {
+        const zl = parseInt(r[COL.ZL]) || 0;
+        const co = parseInt(r[COL.CO]) || 0;
+        const st = parseInt(r[COL.ST]) || 0;
+        const fb = parseInt(r[COL.FB]) || 0;
+        const hh = parseInt(r[COL.HH]) || 0;
+        return {
+          sku:        r[COL.SKU].trim(),
+          ean:        r[COL.EAN]?.trim()        || "",
+          name:       r[COL.NAME]?.trim()       || "",
+          category:   r[COL.KATEGORIE]?.trim()  || "",
+          costPrice:  parseFloat(r[COL.EKNETTO])    || 0,
+          uvp:        parseFloat(r[COL.UVPBRUTTO])  || 0,
+          price:      parseFloat(r[COL.VKBRUTTO])   || 0,
+          minPrice:   parseFloat(r[COL.MINDESTVK])  || 0,
+          supplier:   r[COL.LIEFERANT]?.trim()  || "",
+          stock:      zl + co + st + fb + hh,   // Gesamtbestand
+          stocks:     { zl, co, st, fb, hh },   // Einzelbestände
+          image:      r[COL.IMAGE_GROSS]?.trim() || "",
+          productsId: r[COL.PRODUCTS_ID]?.trim() || "",
+          masterId:   r[COL.MASTER_ID]?.trim()   || "",
+        };
+      });
 
     // Schnell-Lookups aufbauen
     artBySku    = {};
@@ -524,7 +539,8 @@ function renderDetailView(wrap, detailSku, onBack) {
     <div style="font-weight:600;font-size:14px;margin-bottom:2px;">${art.name}</div>
     <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""}</div>
     <div class="muted">${art.category} · ${art.supplier}</div>
-    <div class="muted">VK: ${fmtEur(art.price)} · Min: ${fmtEur(art.minPrice)} · Lager: ${art.stock}</div>
+    <div class="muted">VK: ${fmtEur(art.price)} · Min: ${fmtEur(art.minPrice)}</div>
+    <div class="muted" style="margin-top:4px;">${fmtStocks(art.stocks)}</div>
     <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
       <div class="muted" style="font-size:12px;margin-bottom:6px;">Menge planen:</div>
       <div class="qty-control">
@@ -589,7 +605,8 @@ function renderDetailView(wrap, detailSku, onBack) {
         <div style="flex:1;min-width:0;">
           <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sibling.name}</div>
           <div class="muted">${sibling.sku}${sibling.ean ? " · " + sibling.ean : ""}</div>
-          <div class="muted">VK: ${fmtEur(sibling.price)} · Min: ${fmtEur(sibling.minPrice)} · Lager: ${sibling.stock}</div>
+          <div class="muted">VK: ${fmtEur(sibling.price)} · Min: ${fmtEur(sibling.minPrice)}</div>
+          <div class="muted">${fmtStocks(sibling.stocks)}</div>
           ${chips ? `<div class="chip-row">${chips}</div>` : ""}
         </div>
         <div class="qty-control" style="flex-shrink:0;">
@@ -696,7 +713,7 @@ function runPrepSearch() {
         <div style="flex:1;min-width:0;">
           <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${art.name}</div>
           <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""} · ${art.category}</div>
-          <div class="muted">VK: ${fmtEur(art.price)} · Lager: ${art.stock}${master ? ` · <span style="color:var(--info);">Master: ${master.name}</span>` : ""}</div>
+          <div class="muted">VK: ${fmtEur(art.price)} · ${fmtStocks(art.stocks)}${master ? ` · <span style="color:var(--info);">Master: ${master.name}</span>` : ""}</div>
           ${chips ? `<div class="chip-row">${chips}</div>` : ""}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
@@ -1081,6 +1098,17 @@ async function sendWebhook(action, data) {
 
 function fmtEur(v) {
   return (v || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+}
+
+function fmtStocks(s) {
+  if (!s) return "Lager: –";
+  const parts = [];
+  if (s.zl > 0) parts.push(`ZL: ${s.zl}`);
+  if (s.co > 0) parts.push(`CO: ${s.co}`);
+  if (s.st > 0) parts.push(`ST: ${s.st}`);
+  if (s.fb > 0) parts.push(`FB: ${s.fb}`);
+  if (s.hh > 0) parts.push(`HH: ${s.hh}`);
+  return parts.length ? parts.join(" · ") : "Kein Bestand";
 }
 
 // ── EVENTS ────────────────────────────────────────────────────────────────
