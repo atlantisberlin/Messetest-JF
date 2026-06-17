@@ -426,8 +426,9 @@ function renderPrep() {
 }
 
 // ── MERKLISTE (eigener Tab) ────────────────────────────────────────────────
-// Detail-State für Merkliste (eigener Stack, unabhängig von Prep)
 let merklisteDetailSku = null;
+let merklisteCollapsed = {}; // { [kategorie]: bool } – zugeklappte Kategorien
+let masterCollapsed    = {}; // { [masterSku]: bool } – zugeklappte Master-Karten
 
 function renderMerklisteView() {
   const wrap = qs("#view-merkliste");
@@ -437,16 +438,13 @@ function renderMerklisteView() {
     return;
   }
 
+  // Alle geplanten Nicht-Master-Artikel
   const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
 
-  wrap.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-      <span style="font-weight:600;font-size:14px;">Merkliste</span>
-      <span class="muted">${geplant.length ? geplant.length + " Artikel" : ""}</span>
-    </div>`;
+  wrap.innerHTML = "";
 
   if (geplant.length === 0) {
-    wrap.innerHTML += `<div class="muted" style="text-align:center;padding:32px 0;">
+    wrap.innerHTML = `<div class="muted" style="text-align:center;padding:32px 0;">
       <i class="ti ti-star" style="font-size:36px;display:block;margin-bottom:10px;opacity:.4;"></i>
       Noch keine Artikel geplant.<br>
       <span style="font-size:12px;">Artikel in der Vorbereitung suchen und Menge setzen.</span>
@@ -454,58 +452,244 @@ function renderMerklisteView() {
     return;
   }
 
-  geplant.forEach(art => {
-    const sku    = art.sku;
-    const qty    = planned[sku] || 0;
-    const comm   = committed[sku] || 0;
-    const done   = commitDone[sku] || false;
-    const offen  = Math.max(0, qty - comm);
-    const master = getMasterOf(art);
+  // Gesamt-Statistik
+  const totalPlanned = geplant.length;
+  const totalDone    = geplant.filter(a => commitDone[a.sku]).length;
+  const hdr = document.createElement("div");
+  hdr.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;";
+  hdr.innerHTML = `
+    <span style="font-weight:600;font-size:14px;">Merkliste</span>
+    <span class="muted">${totalDone}/${totalPlanned} komm.</span>`;
+  wrap.appendChild(hdr);
 
-    let chips = `<span class="badge info">Geplant: ${qty}</span>`;
-    if (done) chips += `<span class="badge ok"><i class="ti ti-check" style="font-size:10px;"></i> Komm.</span>`;
-    else if (comm > 0) chips += `<span class="badge warn">Offen: ${offen}</span>`;
+  // Artikel nach Kategorie gruppieren
+  // Master-Artikel als Gruppenträger; bei Slaves die Kategorie vom Slave selbst nehmen
+  const byCategory = {};
+  geplant.forEach(slave => {
+    const cat = slave.category || "Sonstige";
+    if (!byCategory[cat]) byCategory[cat] = new Set();
+    byCategory[cat].add(slave);
+  });
 
-    const card = document.createElement("div");
-    card.className = "card";
-    card.style.cursor = "pointer";
-    card.style.borderColor = done ? "var(--ok)" : "var(--info)";
-    card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <div style="flex:1;min-width:0;">
-          <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${art.name}</div>
-          <div class="muted">${art.sku}${master ? ` · <span style="color:var(--info);">${master.name}</span>` : ""}</div>
-          <div class="chip-row">${chips}</div>
-        </div>
-        <div class="qty-control" style="flex-shrink:0;" onclick="event.stopPropagation()">
-          <button class="qty-btn" data-sku="${sku}" data-dir="-1">−</button>
-          <input class="qty-inp" type="number" min="0" value="${qty}" data-sku="${sku}" onclick="event.stopPropagation()" />
-          <button class="qty-btn" data-sku="${sku}" data-dir="1">+</button>
-        </div>
+  // Kategorien alphabetisch sortieren
+  const categories = Object.keys(byCategory).sort((a, b) => a.localeCompare(b, "de"));
+
+  categories.forEach(cat => {
+    const slaves = [...byCategory[cat]];
+
+    // Kategorie-Statistik
+    const catDone  = slaves.filter(a => commitDone[a.sku]).length;
+    const catOffen = slaves.filter(a => !commitDone[a.sku]).length;
+    const catCollapsed = merklisteCollapsed[cat] || false;
+
+    // Kategorie-Header
+    const catHdr = document.createElement("div");
+    catHdr.style.cssText = "display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg2);border-radius:var(--r);cursor:pointer;margin-bottom:6px;border:0.5px solid var(--border);";
+    catHdr.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <i class="ti ti-tag" style="font-size:13px;color:var(--text2);" aria-hidden="true"></i>
+        <span style="font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);">${cat}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        ${catDone > 0 ? `<span class="badge ok"><i class="ti ti-check" style="font-size:9px;"></i> ${catDone} fertig</span>` : ""}
+        ${catOffen > 0 ? `<span class="badge warn"><i class="ti ti-clock" style="font-size:9px;"></i> ${catOffen} offen</span>` : ""}
+        <i class="ti ti-chevron-down" style="font-size:14px;color:var(--text2);transition:transform .2s;transform:${catCollapsed ? "rotate(-90deg)" : "rotate(0deg)"};"></i>
       </div>`;
-
-    // Klick → Detailansicht (direkt die geklickte SKU)
-    card.addEventListener("click", () => {
-      merklisteDetailSku = art.sku;
+    catHdr.addEventListener("click", () => {
+      merklisteCollapsed[cat] = !merklisteCollapsed[cat];
       renderMerklisteView();
     });
+    wrap.appendChild(catHdr);
 
-    card.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
+    if (catCollapsed) return;
+
+    // Slaves nach Master gruppieren
+    const masterGroups = {}; // { masterSku|"__solo__sku": [slave, ...] }
+    slaves.forEach(slave => {
+      const master = getMasterOf(slave);
+      const key = master ? master.sku : `__solo__${slave.sku}`;
+      if (!masterGroups[key]) masterGroups[key] = { master, slaves: [] };
+      masterGroups[key].slaves.push(slave);
+    });
+
+    // Master-Gruppen sortieren: nach Master-Name
+    const groupKeys = Object.keys(masterGroups).sort((a, b) => {
+      const na = masterGroups[a].master ? masterGroups[a].master.name : (masterGroups[a].slaves[0]?.name || "");
+      const nb = masterGroups[b].master ? masterGroups[b].master.name : (masterGroups[b].slaves[0]?.name || "");
+      return na.localeCompare(nb, "de");
+    });
+
+    groupKeys.forEach(key => {
+      const { master, slaves: groupSlaves } = masterGroups[key];
+      _renderMasterGroup(wrap, master, groupSlaves);
+    });
+  });
+}
+
+function _renderMasterGroup(wrap, master, plannedSlaves) {
+  // Alle Slaves des Masters (geplant + nicht geplant)
+  const allSlaves = master ? getSlavesOf(master) : plannedSlaves;
+  const unplannedSlaves = allSlaves.filter(a => !(planned[a.sku] || 0));
+
+  // Statistik für geplante Slaves
+  const totalQty  = plannedSlaves.reduce((s, a) => s + (planned[a.sku] || 0), 0);
+  const totalComm = plannedSlaves.reduce((s, a) => s + (committed[a.sku] || 0), 0);
+  const allDone   = plannedSlaves.every(a => commitDone[a.sku]);
+  const anyDone   = plannedSlaves.some(a => commitDone[a.sku]);
+  const pct       = totalQty > 0 ? Math.round((totalComm / totalQty) * 100) : 0;
+
+  const masterSku     = master ? master.sku : plannedSlaves[0]?.sku;
+  const masterName    = master ? master.name : (plannedSlaves[0]?.name || "");
+  const masterImg     = master ? master.image : (plannedSlaves[0]?.image || "");
+  const isCollapsed   = masterCollapsed[masterSku] || false;
+
+  const card = document.createElement("div");
+  card.style.cssText = "background:var(--bg);border:0.5px solid var(--border);border-radius:var(--rl);margin-bottom:8px;overflow:hidden;";
+
+  // Master-Header
+  const masterHdr = document.createElement("div");
+  masterHdr.style.cssText = "display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;";
+  masterHdr.innerHTML = `
+    ${masterImg
+      ? `<img src="${masterImg}" loading="lazy" style="width:44px;height:44px;object-fit:contain;border-radius:var(--r);border:0.5px solid var(--border);background:var(--bg2);flex-shrink:0;" onerror="this.style.display='none'" />`
+      : `<div style="width:44px;height:44px;border-radius:var(--r);border:0.5px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="ti ti-photo-off" style="font-size:18px;color:var(--text2);"></i></div>`}
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:13px;font-weight:500;line-height:1.35;">${masterName}</div>
+      <div class="muted" style="margin-top:1px;">${plannedSlaves.length} Variante(n) geplant · <span style="color:${allDone ? "var(--ok)" : "var(--warn)"};">${allDone ? "alle komm." : totalComm + "/" + totalQty + " komm."}</span></div>
+    </div>
+    <i class="ti ti-chevron-down" style="font-size:16px;color:var(--text2);flex-shrink:0;transition:transform .2s;transform:${isCollapsed ? "rotate(-90deg)" : "rotate(0deg)"};"></i>`;
+  masterHdr.addEventListener("click", () => {
+    masterCollapsed[masterSku] = !masterCollapsed[masterSku];
+    renderMerklisteView();
+  });
+  card.appendChild(masterHdr);
+
+  // Fortschrittsbalken
+  const progDiv = document.createElement("div");
+  progDiv.style.cssText = "display:flex;gap:6px;padding:0 12px 10px;align-items:center;";
+  progDiv.innerHTML = `
+    <span style="font-size:11px;color:${allDone ? "var(--ok)" : "var(--warn)"};">${totalComm}/${totalQty}</span>
+    <div style="flex:1;height:4px;border-radius:2px;background:var(--bg2);overflow:hidden;">
+      <div style="height:100%;border-radius:2px;background:${allDone ? "var(--ok)" : "var(--warn)"};width:${pct}%;"></div>
+    </div>
+    ${allDone
+      ? `<span class="badge ok"><i class="ti ti-check" style="font-size:9px;"></i> Fertig</span>`
+      : `<span class="badge warn"><i class="ti ti-clock" style="font-size:9px;"></i> Offen</span>`}`;
+  card.appendChild(progDiv);
+
+  if (isCollapsed) { wrap.appendChild(card); return; }
+
+  // Slaves-Bereich
+  const slavesWrap = document.createElement("div");
+  slavesWrap.style.cssText = "border-top:0.5px solid var(--border);";
+
+  // Geplante Slaves zuerst – sortiert: fertig zuerst, dann offen
+  const sortedPlanned = [...plannedSlaves].sort((a, b) => {
+    if (commitDone[a.sku] && !commitDone[b.sku]) return -1;
+    if (!commitDone[a.sku] && commitDone[b.sku]) return 1;
+    return a.name.localeCompare(b.name, "de");
+  });
+
+  const divPlanned = document.createElement("div");
+  divPlanned.style.cssText = "font-size:10px;color:var(--text2);padding:5px 12px;background:var(--bg2);border-bottom:0.5px solid var(--border);";
+  divPlanned.textContent = "Geplant & kommissioniert";
+  slavesWrap.appendChild(divPlanned);
+
+  sortedPlanned.forEach(slave => _renderSlaveRow(slavesWrap, slave, true));
+
+  // Ungeplante Slaves darunter
+  if (unplannedSlaves.length > 0) {
+    const divUnplanned = document.createElement("div");
+    divUnplanned.style.cssText = "font-size:10px;color:var(--text2);padding:5px 12px;background:var(--bg2);border-top:0.5px solid var(--border);border-bottom:0.5px solid var(--border);";
+    divUnplanned.textContent = `Weitere Varianten (${unplannedSlaves.length})`;
+    slavesWrap.appendChild(divUnplanned);
+    unplannedSlaves.sort((a, b) => a.name.localeCompare(b.name, "de"))
+                   .forEach(slave => _renderSlaveRow(slavesWrap, slave, false));
+  }
+
+  card.appendChild(slavesWrap);
+  wrap.appendChild(card);
+}
+
+function _renderSlaveRow(container, slave, isPlanned) {
+  const sku    = slave.sku;
+  const qty    = planned[sku] || 0;
+  const comm   = committed[sku] || 0;
+  const done   = commitDone[sku] || false;
+  const offen  = Math.max(0, qty - comm);
+
+  const row = document.createElement("div");
+  row.style.cssText = `padding:8px 12px;border-bottom:0.5px solid var(--border);background:${
+    done ? "#eaf3de" : (isPlanned && comm > 0 ? "#faeeda" : "var(--bg)")};`;
+
+  const nameColor = done ? "#27500a" : (isPlanned && !done ? "#633806" : "var(--text)");
+  const metaColor = "var(--text2)";
+
+  // Bild + Info
+  const topRow = document.createElement("div");
+  topRow.style.cssText = "display:flex;gap:8px;align-items:flex-start;";
+  topRow.innerHTML = `
+    ${slave.image
+      ? `<img src="${slave.image}" loading="lazy" style="width:40px;height:40px;object-fit:contain;border-radius:6px;border:0.5px solid var(--border);background:var(--bg2);flex-shrink:0;" onerror="this.style.display='none'" />`
+      : `<div style="width:40px;height:40px;border-radius:6px;border:0.5px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="ti ti-photo-off" style="font-size:14px;color:var(--text2);"></i></div>`}
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:12px;font-weight:500;line-height:1.35;color:${nameColor};">${slave.name}</div>
+      <div style="font-size:11px;color:${metaColor};margin-top:1px;">${slave.sku}${slave.ean ? " · " + slave.ean : ""}</div>
+      ${stockGrid(slave.stocks, true)}
+      ${isPlanned ? `<div style="font-size:11px;color:${done ? "#3b6d11" : "#854f0b"};margin-top:4px;">${comm}/${qty} komm.${!done ? ` · ${offen} offen` : ""}</div>` : ""}
+    </div>`;
+  row.appendChild(topRow);
+
+  // Unterste Zeile: volle Breite
+  const bottomRow = document.createElement("div");
+  bottomRow.style.cssText = "margin-top:8px;";
+
+  if (done) {
+    // Rückgängig-Button
+    const undoBtn = document.createElement("button");
+    undoBtn.style.cssText = "display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:7px 10px;border-radius:var(--r);border:0.5px solid var(--ok);background:var(--ok-bg);color:var(--ok);font-size:12px;cursor:pointer;";
+    undoBtn.innerHTML = `<i class="ti ti-arrow-back-up" style="font-size:14px;"></i> Kommissionierung rückgängig`;
+    undoBtn.addEventListener("click", async () => {
+      const lastEntry = (commitLog[sku] || []).at(-1);
+      if (!confirm(`Letzte Kommissionierung von "${slave.name}" rückgängig machen?`)) return;
+      const undoQty = lastEntry ? lastEntry.qty : (committed[sku] || 0);
+      commitLog[sku] = (commitLog[sku] || []).slice(0, -1);
+      committed[sku] = Math.max(0, (committed[sku] || 0) - undoQty);
+      if (committed[sku] === 0) delete committed[sku];
+      delete commitDone[sku];
+      saveState();
+      showNotification(`${slave.name} – Kommissionierung rückgängig`, "warn");
+      await sendWebhook("COMMIT_UNDO", { sku, art: slave, undoQty });
+      renderMerklisteView();
+    });
+    bottomRow.appendChild(undoBtn);
+  } else {
+    // Qty-Control volle Breite
+    const borderCol = isPlanned ? "var(--warn)" : "var(--border2)";
+    const qtyWrap = document.createElement("div");
+    qtyWrap.style.cssText = "display:flex;align-items:center;gap:6px;";
+    qtyWrap.innerHTML = `
+      <button class="qty-btn" data-sku="${sku}" data-dir="-1" style="border-color:${borderCol};flex-shrink:0;">−</button>
+      <input class="qty-inp" type="number" min="0" value="${qty}" data-sku="${sku}" style="flex:1;border-color:${borderCol};" />
+      <button class="qty-btn" data-sku="${sku}" data-dir="1" style="border-color:${borderCol};flex-shrink:0;">+</button>`;
+    qtyWrap.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
       const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
       const neu = Math.max(0, (planned[s] || 0) + dir);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
       saveState(); renderMerklisteView();
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: articles.find(a => a.sku === s) });
+      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
     }));
-    card.querySelector(".qty-inp").addEventListener("change", function() {
+    qtyWrap.querySelector(".qty-inp").addEventListener("change", function() {
       const s = this.dataset.sku, neu = Math.max(0, parseInt(this.value) || 0);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
       saveState(); renderMerklisteView();
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: articles.find(a => a.sku === s) });
+      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
     });
+    bottomRow.appendChild(qtyWrap);
+  }
 
-    wrap.appendChild(card);
-  });
+  row.appendChild(bottomRow);
+  container.appendChild(row);
 }
 
 // ── GETEILTE DETAILANSICHT (Prep + Merkliste nutzen dieselbe Funktion) ─────
