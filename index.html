@@ -121,6 +121,7 @@
 
   <div class="tabs" style="margin-top:10px;">
     <button class="tab active" data-tab="prep"><i class="ti ti-clipboard-list"></i>Vorbereitung</button>
+    <button class="tab" data-tab="merkliste"><i class="ti ti-star"></i>Merkliste</button>
     <button class="tab" data-tab="warehouse"><i class="ti ti-packages"></i>Kommission</button>
     <button class="tab" data-tab="sales"><i class="ti ti-shopping-cart"></i>Verkauf</button>
   </div>
@@ -129,6 +130,7 @@
 
   <div style="padding:12px 16px;">
     <div id="view-prep"></div>
+    <div id="view-merkliste"></div>
     <div id="view-warehouse"></div>
     <div id="view-sales"></div>
   </div>
@@ -317,12 +319,13 @@ function parseCSV(text) {
 
 // ── VIEWS ─────────────────────────────────────────────────────────────────
 function renderView() {
-  ["prep","warehouse","sales"].forEach(v => qs(`#view-${v}`).style.display = "none");
+  ["prep","merkliste","warehouse","sales"].forEach(v => qs(`#view-${v}`).style.display = "none");
   qs(`#view-${currentView}`).style.display = "block";
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === currentView));
-  if (currentView === "prep")      renderPrep();
-  if (currentView === "warehouse") renderWarehouse();
-  if (currentView === "sales")     renderSales();
+  if (currentView === "prep")       renderPrep();
+  if (currentView === "merkliste")  renderMerklisteView();
+  if (currentView === "warehouse")  renderWarehouse();
+  if (currentView === "sales")      renderSales();
 }
 
 // ── AUTOCOMPLETE HELPER ───────────────────────────────────────────────────
@@ -389,14 +392,6 @@ function renderPrep() {
   const allKategorien  = [...new Set(articles.map(a => a.category).filter(Boolean))].sort();
 
   wrap.innerHTML = `
-    <div class="merkliste-header">
-      <span class="merkliste-title"><i class="ti ti-star" style="font-size:12px;"></i> Merkliste</span>
-      <span class="muted" id="merkliste-count"></span>
-    </div>
-    <div id="prep-merkliste"></div>
-
-    <div class="divider"></div>
-
     <div class="filter-bar">
       <div class="search-bar" style="margin-bottom:8px;">
         <i class="ti ti-search"></i>
@@ -420,8 +415,6 @@ function renderPrep() {
     <div id="prep-pagination"></div>
   `;
 
-  renderMerkliste();
-
   // Autocomplete
   makeAutocomplete(qs("#prep-lieferant"), qs("#ac-lieferant"), () => allLieferanten, val => {
     prepLieferant = val; prepPage = 0; runPrepSearch();
@@ -439,22 +432,35 @@ function renderPrep() {
   runPrepSearch();
 }
 
-// ── MERKLISTE (geplante Artikel, immer sichtbar) ──────────────────────────
-function renderMerkliste() {
-  const wrap    = qs("#prep-merkliste");
-  const countEl = qs("#merkliste-count");
-  if (!wrap) return;
+// ── MERKLISTE (eigener Tab) ────────────────────────────────────────────────
+// Detail-State für Merkliste (eigener Stack, unabhängig von Prep)
+let merklisteDetailSku = null;
 
-  // Nur Nicht-Master-Artikel mit qty > 0
-  const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
-  if (countEl) countEl.textContent = geplant.length ? `${geplant.length} Artikel` : "";
+function renderMerklisteView() {
+  const wrap = qs("#view-merkliste");
 
-  if (geplant.length === 0) {
-    wrap.innerHTML = `<div class="muted" style="font-size:12px;padding:4px 0 4px;">Noch keine Artikel geplant.</div>`;
+  if (merklisteDetailSku) {
+    renderDetailView(wrap, merklisteDetailSku, () => { merklisteDetailSku = null; renderMerklisteView(); });
     return;
   }
 
-  wrap.innerHTML = "";
+  const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
+
+  wrap.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <span style="font-weight:600;font-size:14px;">Merkliste</span>
+      <span class="muted">${geplant.length ? geplant.length + " Artikel" : ""}</span>
+    </div>`;
+
+  if (geplant.length === 0) {
+    wrap.innerHTML += `<div class="muted" style="text-align:center;padding:32px 0;">
+      <i class="ti ti-star" style="font-size:36px;display:block;margin-bottom:10px;opacity:.4;"></i>
+      Noch keine Artikel geplant.<br>
+      <span style="font-size:12px;">Artikel in der Vorbereitung suchen und Menge setzen.</span>
+    </div>`;
+    return;
+  }
+
   geplant.forEach(art => {
     const sku    = art.sku;
     const qty    = planned[sku] || 0;
@@ -475,37 +481,147 @@ function renderMerkliste() {
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
         <div style="flex:1;min-width:0;">
           <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${art.name}</div>
-          <div class="muted">${art.sku}${master ? ` · <span style="color:var(--info);">Master: ${master.name}</span>` : ""}</div>
+          <div class="muted">${art.sku}${master ? ` · <span style="color:var(--info);">${master.name}</span>` : ""}</div>
           <div class="chip-row">${chips}</div>
         </div>
         <div class="qty-control" style="flex-shrink:0;" onclick="event.stopPropagation()">
           <button class="qty-btn" data-sku="${sku}" data-dir="-1">−</button>
-          <input class="qty-inp" type="number" min="0" value="${qty}" data-sku="${sku}" />
+          <input class="qty-inp" type="number" min="0" value="${qty}" data-sku="${sku}" onclick="event.stopPropagation()" />
           <button class="qty-btn" data-sku="${sku}" data-dir="1">+</button>
         </div>
       </div>`;
 
-    // Klick → Detailansicht (beim Slave den Master öffnen)
+    // Klick → Detailansicht (immer Master öffnen wenn vorhanden)
     card.addEventListener("click", () => {
-      prepDetailSku = master ? master.sku : art.sku;
-      renderPrep();
+      merklisteDetailSku = master ? master.sku : art.sku;
+      renderMerklisteView();
     });
 
     card.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
       const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
       const neu = Math.max(0, (planned[s] || 0) + dir);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState(); renderMerkliste();
+      saveState(); renderMerklisteView();
       sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: articles.find(a => a.sku === s) });
     }));
     card.querySelector(".qty-inp").addEventListener("change", function() {
       const s = this.dataset.sku, neu = Math.max(0, parseInt(this.value) || 0);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState(); renderMerkliste();
+      saveState(); renderMerklisteView();
       sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: articles.find(a => a.sku === s) });
     });
 
     wrap.appendChild(card);
+  });
+}
+
+// ── GETEILTE DETAILANSICHT (Prep + Merkliste nutzen dieselbe Funktion) ─────
+function renderDetailView(wrap, detailSku, onBack) {
+  const art = articles.find(a => a.sku === detailSku);
+  if (!art) { onBack(); return; }
+
+  const slaves = getSlavesOf(art);
+  const master = getMasterOf(art);
+  const qty    = planned[art.sku] || 0;
+
+  wrap.innerHTML = `
+    <button class="btn btn-sm" id="btn-detail-back" style="margin-bottom:12px;">
+      <i class="ti ti-arrow-left"></i> Zurück
+    </button>
+    <div style="background:var(--bg2);border-radius:var(--rl);padding:12px;margin-bottom:12px;">
+      <div style="font-weight:600;font-size:14px;margin-bottom:2px;">${art.name}</div>
+      <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""}</div>
+      <div class="muted">${art.category} · ${art.supplier}</div>
+      <div class="muted">VK: ${fmtEur(art.price)} · Min: ${fmtEur(art.minPrice)} · Lager: ${art.stock}</div>
+      ${master ? `<div style="margin-top:4px;font-size:12px;color:var(--info);">Master: ${master.name} (${master.sku})</div>` : ""}
+      ${slaves.length > 0 ? `<div style="margin-top:4px;" class="muted">${slaves.length} Variante(n)</div>` : ""}
+      ${slaves.length === 0 ? `
+        <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
+          <div class="muted" style="font-size:12px;margin-bottom:6px;">Menge planen:</div>
+          <div class="qty-control">
+            <button class="qty-btn" id="d-minus" data-sku="${art.sku}" data-dir="-1">−</button>
+            <input class="qty-inp" type="number" min="0" value="${qty}" id="d-qty" data-sku="${art.sku}" style="width:60px;" />
+            <button class="qty-btn" id="d-plus" data-sku="${art.sku}" data-dir="1">+</button>
+          </div>
+        </div>` : ""}
+    </div>
+    ${slaves.length > 0 ? `<div class="merkliste-title" style="margin-bottom:8px;">Varianten</div>` : ""}
+    <div id="detail-slaves"></div>
+  `;
+
+  qs("#btn-detail-back").onclick = onBack;
+
+  // Qty für Einzelartikel (ohne Slaves)
+  if (slaves.length === 0) {
+    const updateQty = (sku, neu) => {
+      if (neu === 0) delete planned[sku]; else planned[sku] = neu;
+      saveState();
+      sendWebhook("PLAN_UPDATE", { sku, qty: neu, art });
+    };
+    qs("#d-minus").onclick = () => {
+      const neu = Math.max(0, (planned[art.sku] || 0) - 1);
+      qs("#d-qty").value = neu; updateQty(art.sku, neu);
+    };
+    qs("#d-plus").onclick = () => {
+      const neu = (planned[art.sku] || 0) + 1;
+      qs("#d-qty").value = neu; updateQty(art.sku, neu);
+    };
+    qs("#d-qty").addEventListener("change", function() {
+      updateQty(art.sku, Math.max(0, parseInt(this.value) || 0));
+    });
+  }
+
+  // Slaves rendern
+  const slavesWrap = qs("#detail-slaves");
+  slaves.forEach(slave => {
+    const sq    = planned[slave.sku] || 0;
+    const sc    = committed[slave.sku] || 0;
+    const sdone = commitDone[slave.sku] || false;
+    const soffen = Math.max(0, sq - sc);
+
+    let chips = "";
+    if (sq > 0) {
+      chips += `<span class="badge info">Geplant: ${sq}</span>`;
+      if (sdone) chips += `<span class="badge ok"><i class="ti ti-check" style="font-size:10px;"></i> Komm.</span>`;
+      else if (sc > 0) chips += `<span class="badge warn">Offen: ${soffen}</span>`;
+    }
+
+    const card = document.createElement("div");
+    card.className = "slave-card";
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${slave.name}</div>
+          <div class="muted">${slave.sku}${slave.ean ? " · " + slave.ean : ""}</div>
+          <div class="muted">VK: ${fmtEur(slave.price)} · Min: ${fmtEur(slave.minPrice)} · Lager: ${slave.stock}</div>
+          ${chips ? `<div class="chip-row">${chips}</div>` : ""}
+        </div>
+        <div class="qty-control" style="flex-shrink:0;">
+          <button class="qty-btn" data-sku="${slave.sku}" data-dir="-1">−</button>
+          <input class="qty-inp" type="number" min="0" value="${sq}" data-sku="${slave.sku}" style="width:52px;" />
+          <button class="qty-btn" data-sku="${slave.sku}" data-dir="1">+</button>
+        </div>
+      </div>`;
+
+    card.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
+      const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
+      const neu = Math.max(0, (planned[s] || 0) + dir);
+      if (neu === 0) delete planned[s]; else planned[s] = neu;
+      saveState();
+      const inp = card.querySelector(`.qty-inp[data-sku="${s}"]`);
+      if (inp) inp.value = neu;
+      const chipsEl = card.querySelector(".chip-row");
+      if (chipsEl) chipsEl.innerHTML = neu > 0 ? `<span class="badge info">Geplant: ${neu}</span>` : "";
+      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
+    }));
+    card.querySelector(".qty-inp").addEventListener("change", function() {
+      const s = this.dataset.sku, neu = Math.max(0, parseInt(this.value) || 0);
+      if (neu === 0) delete planned[s]; else planned[s] = neu;
+      saveState();
+      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
+    });
+
+    slavesWrap.appendChild(card);
   });
 }
 
@@ -576,6 +692,7 @@ function runPrepSearch() {
 
     const card = document.createElement("div");
     card.className = "card";
+    card.style.cursor = "pointer";
     if (qty > 0) card.style.borderColor = done ? "var(--ok)" : "var(--info)";
 
     card.innerHTML = `
@@ -587,21 +704,17 @@ function runPrepSearch() {
           ${chips ? `<div class="chip-row">${chips}</div>` : ""}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
-          <div class="qty-control">
+          <div class="qty-control" onclick="event.stopPropagation()">
             <button class="qty-btn" data-sku="${sku}" data-dir="-1">−</button>
-            <input class="qty-inp" type="number" min="0" value="${qty}" data-sku="${sku}" style="width:52px;" />
+            <input class="qty-inp" type="number" min="0" value="${qty}" data-sku="${sku}" style="width:52px;" onclick="event.stopPropagation()" />
             <button class="qty-btn" data-sku="${sku}" data-dir="1">+</button>
           </div>
-          <button class="btn-sm" data-open="${master ? master.sku : sku}" style="font-size:11px;">
-            <i class="ti ti-info-circle"></i> Detail
-          </button>
         </div>
       </div>`;
 
-    // Detail-Button
-    card.querySelector("[data-open]").addEventListener("click", e => {
-      e.stopPropagation();
-      prepDetailSku = e.currentTarget.dataset.open;
+    // Klick auf Karte → Detailansicht (bei Slave immer den Master öffnen)
+    card.addEventListener("click", () => {
+      prepDetailSku = master ? master.sku : art.sku;
       renderPrep();
     });
 
@@ -615,7 +728,6 @@ function runPrepSearch() {
       if (inp) inp.value = neu;
       card.style.borderColor = neu > 0 ? "var(--info)" : "";
       sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: articles.find(a => a.sku === s) });
-      renderMerkliste();
     }));
     card.querySelector(".qty-inp").addEventListener("change", function() {
       const s = this.dataset.sku, neu = Math.max(0, parseInt(this.value) || 0);
@@ -623,7 +735,6 @@ function runPrepSearch() {
       saveState();
       card.style.borderColor = neu > 0 ? "var(--info)" : "";
       sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: articles.find(a => a.sku === s) });
-      renderMerkliste();
     });
 
     resultsEl.appendChild(card);
@@ -660,117 +771,9 @@ function runPrepSearch() {
   }
 }
 
-// ── DETAILANSICHT (Artikel + seine Slaves) ────────────────────────────────
+// ── DETAILANSICHT (Prep) ──────────────────────────────────────────────────
 function renderPrepDetail(wrap) {
-  const art = articles.find(a => a.sku === prepDetailSku);
-  if (!art) { prepDetailSku = null; renderPrep(); return; }
-
-  const slaves = getSlavesOf(art);
-  const master = getMasterOf(art);
-  const qty    = planned[art.sku] || 0;
-
-  wrap.innerHTML = `
-    <button class="btn btn-sm" id="btn-detail-back" style="margin-bottom:12px;">
-      <i class="ti ti-arrow-left"></i> Zurück
-    </button>
-    <div style="background:var(--bg2);border-radius:var(--rl);padding:12px;margin-bottom:12px;">
-      <div style="font-weight:600;font-size:14px;margin-bottom:2px;">${art.name}</div>
-      <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""}</div>
-      <div class="muted">${art.category} · ${art.supplier}</div>
-      <div class="muted">VK: ${fmtEur(art.price)} · Min: ${fmtEur(art.minPrice)} · Lager: ${art.stock}</div>
-      ${master ? `<div style="margin-top:4px;font-size:12px;color:var(--info);">Master: ${master.name} (${master.sku})</div>` : ""}
-      ${slaves.length > 0 ? `<div style="margin-top:4px;" class="muted">${slaves.length} Variante(n)</div>` : ""}
-      ${slaves.length === 0 ? `
-        <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
-          <div class="muted" style="font-size:12px;margin-bottom:6px;">Menge planen:</div>
-          <div class="qty-control">
-            <button class="qty-btn" id="d-minus" data-sku="${art.sku}" data-dir="-1">−</button>
-            <input class="qty-inp" type="number" min="0" value="${qty}" id="d-qty" data-sku="${art.sku}" style="width:60px;" />
-            <button class="qty-btn" id="d-plus" data-sku="${art.sku}" data-dir="1">+</button>
-          </div>
-        </div>` : ""}
-    </div>
-    ${slaves.length > 0 ? `<div class="merkliste-title" style="margin-bottom:8px;">Varianten</div>` : ""}
-    <div id="detail-slaves"></div>
-  `;
-
-  qs("#btn-detail-back").onclick = () => { prepDetailSku = null; renderPrep(); };
-
-  // Qty-Control für Artikel ohne Slaves
-  if (slaves.length === 0) {
-    const updateQty = (sku, neu) => {
-      if (neu === 0) delete planned[sku]; else planned[sku] = neu;
-      saveState(); renderMerkliste();
-      sendWebhook("PLAN_UPDATE", { sku, qty: neu, art });
-    };
-    qs("#d-minus").onclick = () => {
-      const neu = Math.max(0, (planned[art.sku] || 0) - 1);
-      qs("#d-qty").value = neu; updateQty(art.sku, neu);
-    };
-    qs("#d-plus").onclick = () => {
-      const neu = (planned[art.sku] || 0) + 1;
-      qs("#d-qty").value = neu; updateQty(art.sku, neu);
-    };
-    qs("#d-qty").addEventListener("change", function() {
-      updateQty(art.sku, Math.max(0, parseInt(this.value) || 0));
-    });
-  }
-
-  // Slaves rendern
-  const slavesWrap = qs("#detail-slaves");
-  slaves.forEach(slave => {
-    const sq   = planned[slave.sku] || 0;
-    const sc   = committed[slave.sku] || 0;
-    const sdone = commitDone[slave.sku] || false;
-    const soffen = Math.max(0, sq - sc);
-
-    let chips = "";
-    if (sq > 0) {
-      chips += `<span class="badge info">Geplant: ${sq}</span>`;
-      if (sdone) chips += `<span class="badge ok"><i class="ti ti-check" style="font-size:10px;"></i> Komm.</span>`;
-      else if (sc > 0) chips += `<span class="badge warn">Offen: ${soffen}</span>`;
-    }
-
-    const card = document.createElement("div");
-    card.className = "slave-card";
-    card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-        <div style="flex:1;min-width:0;">
-          <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${slave.name}</div>
-          <div class="muted">${slave.sku}${slave.ean ? " · " + slave.ean : ""}</div>
-          <div class="muted">VK: ${fmtEur(slave.price)} · Min: ${fmtEur(slave.minPrice)} · Lager: ${slave.stock}</div>
-          ${chips ? `<div class="chip-row">${chips}</div>` : ""}
-        </div>
-        <div class="qty-control" style="flex-shrink:0;">
-          <button class="qty-btn" data-sku="${slave.sku}" data-dir="-1">−</button>
-          <input class="qty-inp" type="number" min="0" value="${sq}" data-sku="${slave.sku}" style="width:52px;" />
-          <button class="qty-btn" data-sku="${slave.sku}" data-dir="1">+</button>
-        </div>
-      </div>`;
-
-    card.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
-      const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
-      const neu = Math.max(0, (planned[s] || 0) + dir);
-      if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState();
-      const inp = card.querySelector(`.qty-inp[data-sku="${s}"]`);
-      if (inp) inp.value = neu;
-      // Chips aktualisieren
-      const chipsEl = card.querySelector(".chip-row");
-      if (chipsEl) chipsEl.innerHTML = neu > 0 ? `<span class="badge info">Geplant: ${neu}</span>` : "";
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
-      renderMerkliste();
-    }));
-    card.querySelector(".qty-inp").addEventListener("change", function() {
-      const s = this.dataset.sku, neu = Math.max(0, parseInt(this.value) || 0);
-      if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState();
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
-      renderMerkliste();
-    });
-
-    slavesWrap.appendChild(card);
-  });
+  renderDetailView(wrap, prepDetailSku, () => { prepDetailSku = null; renderPrep(); });
 }
 
 // ── KOMMISSIONIERUNG ──────────────────────────────────────────────────────
@@ -1087,6 +1090,9 @@ function fmtEur(v) {
 // ── EVENTS ────────────────────────────────────────────────────────────────
 document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
   currentView = t.dataset.tab;
+  // Detail-States beim Tab-Wechsel zurücksetzen
+  prepDetailSku       = null;
+  merklisteDetailSku  = null;
   renderView();
 }));
 
