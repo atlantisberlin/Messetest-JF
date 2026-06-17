@@ -469,9 +469,9 @@ function renderMerklisteView() {
         </div>
       </div>`;
 
-    // Klick → Detailansicht (immer Master öffnen wenn vorhanden)
+    // Klick → Detailansicht (direkt die geklickte SKU)
     card.addEventListener("click", () => {
-      merklisteDetailSku = master ? master.sku : art.sku;
+      merklisteDetailSku = art.sku;
       renderMerklisteView();
     });
 
@@ -498,63 +498,81 @@ function renderDetailView(wrap, detailSku, onBack) {
   const art = articles.find(a => a.sku === detailSku);
   if (!art) { onBack(); return; }
 
-  const slaves = getSlavesOf(art);
-  const master = getMasterOf(art);
-  const qty    = planned[art.sku] || 0;
+  // Alle Geschwister ermitteln:
+  // Falls der angeklickte Artikel selbst eine masterId hat → alle mit gleicher masterId
+  // Falls der angeklickte Artikel ein Master ist (hat Slaves) → alle seine Slaves
+  let siblings = [];
+  if (art.masterId) {
+    // Slave angeklickt → alle Artikel mit gleicher masterId (außer sich selbst)
+    siblings = articles.filter(a => a.masterId === art.masterId && a.sku !== art.sku);
+  } else if (isMaster(art)) {
+    // Master angeklickt → alle Slaves
+    siblings = getSlavesOf(art);
+  }
+
+  const qty = planned[art.sku] || 0;
 
   wrap.innerHTML = `
     <button class="btn btn-sm" id="btn-detail-back" style="margin-bottom:12px;">
       <i class="ti ti-arrow-left"></i> Zurück
-    </button>
-    <div style="background:var(--bg2);border-radius:var(--rl);padding:12px;margin-bottom:12px;">
-      <div style="font-weight:600;font-size:14px;margin-bottom:2px;">${art.name}</div>
-      <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""}</div>
-      <div class="muted">${art.category} · ${art.supplier}</div>
-      <div class="muted">VK: ${fmtEur(art.price)} · Min: ${fmtEur(art.minPrice)} · Lager: ${art.stock}</div>
-      ${master ? `<div style="margin-top:4px;font-size:12px;color:var(--info);">Master: ${master.name} (${master.sku})</div>` : ""}
-      ${slaves.length > 0 ? `<div style="margin-top:4px;" class="muted">${slaves.length} Variante(n)</div>` : ""}
-      ${slaves.length === 0 ? `
-        <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
-          <div class="muted" style="font-size:12px;margin-bottom:6px;">Menge planen:</div>
-          <div class="qty-control">
-            <button class="qty-btn" id="d-minus" data-sku="${art.sku}" data-dir="-1">−</button>
-            <input class="qty-inp" type="number" min="0" value="${qty}" id="d-qty" data-sku="${art.sku}" style="width:60px;" />
-            <button class="qty-btn" id="d-plus" data-sku="${art.sku}" data-dir="1">+</button>
-          </div>
-        </div>` : ""}
-    </div>
-    ${slaves.length > 0 ? `<div class="merkliste-title" style="margin-bottom:8px;">Varianten</div>` : ""}
-    <div id="detail-slaves"></div>
-  `;
+    </button>`;
+
+  // Angeklickten Artikel hervorgehoben anzeigen
+  const mainCard = document.createElement("div");
+  mainCard.style.cssText = "background:var(--info-bg);border:1.5px solid var(--info);border-radius:var(--rl);padding:12px;margin-bottom:12px;";
+  mainCard.innerHTML = `
+    <div style="font-weight:600;font-size:14px;margin-bottom:2px;">${art.name}</div>
+    <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""}</div>
+    <div class="muted">${art.category} · ${art.supplier}</div>
+    <div class="muted">VK: ${fmtEur(art.price)} · Min: ${fmtEur(art.minPrice)} · Lager: ${art.stock}</div>
+    <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
+      <div class="muted" style="font-size:12px;margin-bottom:6px;">Menge planen:</div>
+      <div class="qty-control">
+        <button class="qty-btn" id="d-minus" data-sku="${art.sku}" data-dir="-1">−</button>
+        <input class="qty-inp" type="number" min="0" value="${qty}" id="d-qty" data-sku="${art.sku}" style="width:60px;" />
+        <button class="qty-btn" id="d-plus" data-sku="${art.sku}" data-dir="1">+</button>
+      </div>
+    </div>`;
+  wrap.appendChild(mainCard);
+
+  // Geschwister-Header
+  if (siblings.length > 0) {
+    const hdr = document.createElement("div");
+    hdr.className = "merkliste-title";
+    hdr.style.marginBottom = "8px";
+    hdr.textContent = `Weitere Varianten (${siblings.length})`;
+    wrap.appendChild(hdr);
+  }
+
+  const slavesWrap = document.createElement("div");
+  slavesWrap.id = "detail-slaves";
+  wrap.appendChild(slavesWrap);
 
   qs("#btn-detail-back").onclick = onBack;
 
-  // Qty für Einzelartikel (ohne Slaves)
-  if (slaves.length === 0) {
-    const updateQty = (sku, neu) => {
-      if (neu === 0) delete planned[sku]; else planned[sku] = neu;
-      saveState();
-      sendWebhook("PLAN_UPDATE", { sku, qty: neu, art });
-    };
-    qs("#d-minus").onclick = () => {
-      const neu = Math.max(0, (planned[art.sku] || 0) - 1);
-      qs("#d-qty").value = neu; updateQty(art.sku, neu);
-    };
-    qs("#d-plus").onclick = () => {
-      const neu = (planned[art.sku] || 0) + 1;
-      qs("#d-qty").value = neu; updateQty(art.sku, neu);
-    };
-    qs("#d-qty").addEventListener("change", function() {
-      updateQty(art.sku, Math.max(0, parseInt(this.value) || 0));
-    });
-  }
+  // Qty für angeklickten Artikel
+  const updateMainQty = (sku, neu) => {
+    if (neu === 0) delete planned[sku]; else planned[sku] = neu;
+    saveState();
+    sendWebhook("PLAN_UPDATE", { sku, qty: neu, art });
+  };
+  qs("#d-minus").onclick = () => {
+    const neu = Math.max(0, (planned[art.sku] || 0) - 1);
+    qs("#d-qty").value = neu; updateMainQty(art.sku, neu);
+  };
+  qs("#d-plus").onclick = () => {
+    const neu = (planned[art.sku] || 0) + 1;
+    qs("#d-qty").value = neu; updateMainQty(art.sku, neu);
+  };
+  qs("#d-qty").addEventListener("change", function() {
+    updateMainQty(art.sku, Math.max(0, parseInt(this.value) || 0));
+  });
 
-  // Slaves rendern
-  const slavesWrap = qs("#detail-slaves");
-  slaves.forEach(slave => {
-    const sq    = planned[slave.sku] || 0;
-    const sc    = committed[slave.sku] || 0;
-    const sdone = commitDone[slave.sku] || false;
+  // Geschwister rendern
+  siblings.forEach(sibling => {
+    const sq     = planned[sibling.sku] || 0;
+    const sc     = committed[sibling.sku] || 0;
+    const sdone  = commitDone[sibling.sku] || false;
     const soffen = Math.max(0, sq - sc);
 
     let chips = "";
@@ -569,15 +587,15 @@ function renderDetailView(wrap, detailSku, onBack) {
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${slave.name}</div>
-          <div class="muted">${slave.sku}${slave.ean ? " · " + slave.ean : ""}</div>
-          <div class="muted">VK: ${fmtEur(slave.price)} · Min: ${fmtEur(slave.minPrice)} · Lager: ${slave.stock}</div>
+          <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sibling.name}</div>
+          <div class="muted">${sibling.sku}${sibling.ean ? " · " + sibling.ean : ""}</div>
+          <div class="muted">VK: ${fmtEur(sibling.price)} · Min: ${fmtEur(sibling.minPrice)} · Lager: ${sibling.stock}</div>
           ${chips ? `<div class="chip-row">${chips}</div>` : ""}
         </div>
         <div class="qty-control" style="flex-shrink:0;">
-          <button class="qty-btn" data-sku="${slave.sku}" data-dir="-1">−</button>
-          <input class="qty-inp" type="number" min="0" value="${sq}" data-sku="${slave.sku}" style="width:52px;" />
-          <button class="qty-btn" data-sku="${slave.sku}" data-dir="1">+</button>
+          <button class="qty-btn" data-sku="${sibling.sku}" data-dir="-1">−</button>
+          <input class="qty-inp" type="number" min="0" value="${sq}" data-sku="${sibling.sku}" style="width:52px;" />
+          <button class="qty-btn" data-sku="${sibling.sku}" data-dir="1">+</button>
         </div>
       </div>`;
 
@@ -590,13 +608,13 @@ function renderDetailView(wrap, detailSku, onBack) {
       if (inp) inp.value = neu;
       const chipsEl = card.querySelector(".chip-row");
       if (chipsEl) chipsEl.innerHTML = neu > 0 ? `<span class="badge info">Geplant: ${neu}</span>` : "";
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
+      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: sibling });
     }));
     card.querySelector(".qty-inp").addEventListener("change", function() {
       const s = this.dataset.sku, neu = Math.max(0, parseInt(this.value) || 0);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
       saveState();
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
+      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: sibling });
     });
 
     slavesWrap.appendChild(card);
@@ -690,9 +708,9 @@ function runPrepSearch() {
         </div>
       </div>`;
 
-    // Klick auf Karte → Detailansicht (bei Slave immer den Master öffnen)
+    // Klick auf Karte → Detailansicht (direkt die geklickte SKU)
     card.addEventListener("click", () => {
-      prepDetailSku = master ? master.sku : art.sku;
+      prepDetailSku = art.sku;
       renderPrep();
     });
 
