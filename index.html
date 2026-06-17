@@ -531,6 +531,8 @@ function renderDetailView(wrap, detailSku, onBack) {
 
 function _renderDetailViewInner(wrap, art, onBack) {
 
+  const qty = planned[art.sku] || 0;
+
   // Alle Geschwister ermitteln:
   // Falls der angeklickte Artikel selbst eine masterId hat → alle mit gleicher masterId
   // Falls der angeklickte Artikel ein Master ist (hat Slaves) → alle seine Slaves
