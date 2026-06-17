@@ -161,6 +161,7 @@ let SHEET_ID    = "";
 let WEBHOOK_URL = "";
 let role        = "standard";
 let currentView = "prep";
+let currentUser = "";          // wird beim ersten Start gesetzt
 
 // Prep-Filter-State (bleibt über Re-Renders erhalten)
 let prepPage      = 0;
@@ -168,39 +169,96 @@ let prepSearch    = "";
 let prepLieferant = "";
 let prepKategorie = "";
 let prepNurLager  = false;
-let prepDetailSku = null;   // SKU des aktuell geöffneten Artikels (Detailansicht)
+let prepDetailSku = null;
 
 const PAGE_SIZE = 50;
 
-// ⚡ Alle Schlüssel sind SKUs (strings) – stabil auch bei Reihenfolgenänderungen
-let planned    = {};   // { [sku]: qty }
-let committed  = {};   // { [sku]: qty }
-let commitLog  = {};   // { [sku]: [{qty, ref, ts}] }
-let commitDone = {};   // { [sku]: bool }
-let salesLists = [];
+// ⚡ State – wird aus dem Kommissionierungs-Sheet berechnet, nicht aus localStorage
+let planned    = {};   // { [sku]: qty }        – Summe PLAN + PLAN_ADJUST
+let committed  = {};   // { [sku]: qty }        – Summe COMMIT + COMMIT_UNDO
+let commitLog  = {};   // { [sku]: [{qty, ref, ts, user, uuid}] }
+let commitDone = {};   // { [sku]: bool }       – live berechnet
+let salesLists = [];   // Verkaufslisten (nur localStorage, nicht kritisch)
 let activeSales= null;
 
-// ── PERSISTENZ ────────────────────────────────────────────────────────────
-function saveState() {
-  const s = { planned, committed, commitLog, commitDone, salesLists, activeSales, messeLabel, SHEET_ID, WEBHOOK_URL, role };
-  try { localStorage.setItem("messetool_v2", JSON.stringify(s)); } catch(e){}
+let refreshTimer = null;  // Auto-Refresh Handle
+
+// ── UUID GENERATOR ────────────────────────────────────────────────────────
+function genUUID() {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+  });
 }
-function loadState() {
+
+// ── PERSISTENZ (nur UI-State und Einstellungen) ───────────────────────────
+function saveUIState() {
+  const s = {
+    salesLists, activeSales,
+    messeLabel, SHEET_ID, WEBHOOK_URL, role, currentUser,
+    merklisteCollapsed, masterCollapsed
+  };
+  try { localStorage.setItem("messetool_ui", JSON.stringify(s)); } catch(e){}
+}
+
+function loadUIState() {
   try {
-    const raw = localStorage.getItem("messetool_v2");
-    if (!raw) return;
-    const s = JSON.parse(raw);
-    planned     = s.planned     || {};
-    committed   = s.committed   || {};
-    commitLog   = s.commitLog   || {};
-    commitDone  = s.commitDone  || {};
-    salesLists  = s.salesLists  || [];
-    activeSales = s.activeSales || null;
-    messeLabel  = s.messeLabel  || "Messe-Tool";
-    SHEET_ID    = s.SHEET_ID    || "";
-    WEBHOOK_URL = s.WEBHOOK_URL || "";
-    role        = s.role        || "standard";
+    const raw = localStorage.getItem("messetool_ui");
+    // Auch altes Format lesen (messetool_v2) für nahtlose Migration
+    const old = localStorage.getItem("messetool_v2");
+    const src = raw ? JSON.parse(raw) : (old ? JSON.parse(old) : null);
+    if (!src) return;
+    salesLists  = src.salesLists  || [];
+    activeSales = src.activeSales || null;
+    messeLabel  = src.messeLabel  || "Messe-Tool";
+    SHEET_ID    = src.SHEET_ID    || "";
+    WEBHOOK_URL = src.WEBHOOK_URL || "";
+    role        = src.role        || "standard";
+    currentUser = src.currentUser || "";
+    if (src.merklisteCollapsed) merklisteCollapsed = src.merklisteCollapsed;
+    if (src.masterCollapsed)    masterCollapsed    = src.masterCollapsed;
   } catch(e){}
+}
+
+// Rückwärtskompatibilität: saveState ruft saveUIState auf
+function saveState() { saveUIState(); }
+
+// ── STATE VOM SCRIPT LADEN ────────────────────────────────────────────────
+async function loadRemoteState(silent = false) {
+  if (!WEBHOOK_URL) return;
+  if (!silent) showNotification("Lade aktuellen Stand…", "ok");
+  try {
+    const url  = WEBHOOK_URL + "?action=load&messe=" + encodeURIComponent(messeLabel);
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const json = await resp.json();
+    if (!json.ok) throw new Error(json.error || "Fehler");
+
+    const s = json.state || {};
+    planned   = s.planned   || {};
+    committed = s.committed || {};
+    commitLog = s.commitLog || {};
+    // commitDone live berechnen
+    commitDone = {};
+    Object.keys(planned).forEach(sku => {
+      if ((committed[sku] || 0) >= planned[sku]) commitDone[sku] = true;
+    });
+
+    if (!silent) showNotification("Stand aktualisiert");
+    renderView();
+  } catch(e) {
+    if (!silent) showNotification("Fehler beim Laden: " + e.message, "err");
+    console.warn("loadRemoteState:", e);
+  }
+}
+
+// Auto-Refresh alle 30 Sekunden
+function startAutoRefresh() {
+  stopAutoRefresh();
+  refreshTimer = setInterval(() => loadRemoteState(true), 30000);
+}
+function stopAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
 }
 
 // ── NOTIFICATIONS ─────────────────────────────────────────────────────────
@@ -210,6 +268,14 @@ function showNotification(msg, type="ok") {
   clearTimeout(notifTimer);
   area.innerHTML = `<div class="notification notif-${type}">${msg}</div>`;
   notifTimer = setTimeout(() => area.innerHTML="", 2800);
+}
+
+// ── USER-DIALOG ───────────────────────────────────────────────────────────
+function ensureUser() {
+  if (currentUser) return;
+  const name = prompt("Wer bist du? (Name wird bei Buchungen eingetragen)") || "";
+  currentUser = name.trim() || "Unbekannt";
+  saveUIState();
 }
 
 // ── GOOGLE SHEETS LADEN ───────────────────────────────────────────────────
@@ -680,16 +746,19 @@ function _renderSlaveRow(container, slave, isPlanned) {
       <button class="qty-btn" data-sku="${sku}" data-dir="1" style="border-color:${borderCol};flex-shrink:0;">+</button>`;
     qtyWrap.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
       const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
-      const neu = Math.max(0, (planned[s] || 0) + dir);
+      const old = planned[s] || 0;
+      const neu = Math.max(0, old + dir);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
       saveState(); renderMerklisteView();
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
+      sendPlanWebhook(s, old, neu, slave);
     }));
     qtyWrap.querySelector(".qty-inp").addEventListener("change", function() {
-      const s = this.dataset.sku, neu = Math.max(0, parseInt(this.value) || 0);
+      const s = this.dataset.sku;
+      const old = planned[s] || 0;
+      const neu = Math.max(0, parseInt(this.value) || 0);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
       saveState(); renderMerklisteView();
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: slave });
+      sendPlanWebhook(s, old, neu, slave);
     });
     bottomRow.appendChild(qtyWrap);
   }
@@ -793,9 +862,10 @@ function _renderDetailViewInner(wrap, art, onBack) {
 
   // Qty für angeklickten Artikel – jetzt sicher im DOM
   const updateMainQty = (sku, neu) => {
+    const old = planned[sku] || 0;
     if (neu === 0) delete planned[sku]; else planned[sku] = neu;
     saveState();
-    sendWebhook("PLAN_UPDATE", { sku, qty: neu, art });
+    sendPlanWebhook(sku, old, neu, art);
   };
   const dMinus = wrap.querySelector("#d-minus");
   const dPlus  = wrap.querySelector("#d-plus");
@@ -847,20 +917,23 @@ function _renderDetailViewInner(wrap, art, onBack) {
 
     card.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
       const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
-      const neu = Math.max(0, (planned[s] || 0) + dir);
+      const old = planned[s] || 0;
+      const neu = Math.max(0, old + dir);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
       saveState();
       const inp = card.querySelector(`.qty-inp[data-sku="${s}"]`);
       if (inp) inp.value = neu;
       const chipsEl = card.querySelector(".chip-row");
       if (chipsEl) chipsEl.innerHTML = neu > 0 ? `<span class="badge info">Geplant: ${neu}</span>` : "";
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: sibling });
+      sendPlanWebhook(s, old, neu, sibling);
     }));
     card.querySelector(".qty-inp").addEventListener("change", function() {
-      const s = this.dataset.sku, neu = Math.max(0, parseInt(this.value) || 0);
+      const s = this.dataset.sku;
+      const old = planned[s] || 0;
+      const neu = Math.max(0, parseInt(this.value) || 0);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
       saveState();
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: sibling });
+      sendPlanWebhook(s, old, neu, sibling);
     });
 
     slavesWrap.appendChild(card);
@@ -963,20 +1036,23 @@ function runPrepSearch() {
     // Qty-Events (ohne komplettes Re-Render)
     card.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
       const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
-      const neu = Math.max(0, (planned[s] || 0) + dir);
+      const old = planned[s] || 0;
+      const neu = Math.max(0, old + dir);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
       saveState();
       const inp = card.querySelector(`.qty-inp[data-sku="${s}"]`);
       if (inp) inp.value = neu;
       card.style.borderColor = neu > 0 ? "var(--info)" : "";
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: articles.find(a => a.sku === s) });
+      sendPlanWebhook(s, old, neu, articles.find(a => a.sku === s));
     }));
     card.querySelector(".qty-inp").addEventListener("change", function() {
-      const s = this.dataset.sku, neu = Math.max(0, parseInt(this.value) || 0);
+      const s = this.dataset.sku;
+      const old = planned[s] || 0;
+      const neu = Math.max(0, parseInt(this.value) || 0);
       if (neu === 0) delete planned[s]; else planned[s] = neu;
       saveState();
       card.style.borderColor = neu > 0 ? "var(--info)" : "";
-      sendWebhook("PLAN_UPDATE", { sku: s, qty: neu, art: articles.find(a => a.sku === s) });
+      sendPlanWebhook(s, old, neu, articles.find(a => a.sku === s));
     });
 
     resultsEl.appendChild(card);
@@ -1115,11 +1191,11 @@ function renderWarehouse() {
     if (ref) localStorage.setItem("lastRef", ref);
     committed[sku] = (committed[sku] || 0) + entnahme;
     if (!commitLog[sku]) commitLog[sku] = [];
-    commitLog[sku].push({ qty: entnahme, ref, ts: Date.now() });
+    commitLog[sku].push({ qty: entnahme, ref, ts: new Date().toLocaleString("de-DE"), user: currentUser });
     if (committed[sku] >= (planned[sku] || 0)) commitDone[sku] = true;
     saveState();
     showNotification(`${entnahme}× ${art.name} kommissioniert${ref ? " → " + ref : ""}`);
-    await sendWebhook("COMMIT", { sku, art, qty: entnahme, ref, totalCommitted: committed[sku], planned: planned[sku] });
+    await sendWebhook("COMMIT", { sku, art, qty: entnahme, ref });
     renderWarehouse();
   }));
 
@@ -1152,7 +1228,7 @@ function renderWarehouse() {
     delete commitDone[sku];
     saveState();
     showNotification(`${art.name} aus Kommissionsliste entfernt`, "warn");
-    await sendWebhook("REMOVE_FROM_PREP", { sku, art, wasCommitted: committed[sku] || 0 });
+    await sendWebhook("REMOVE", { sku, art, currentPlanned: planned[sku] || 0 });
     renderWarehouse();
   }));
 }
@@ -1283,7 +1359,14 @@ function renderSales() {
         list.sold[i.sku] = (list.sold[i.sku] || 0) + i.qty;
         committed[i.sku] = Math.max(0, (committed[i.sku] || 0) - i.qty);
       });
-      await sendWebhook("SALE", { list: list.name, items: list.items, total });
+      await sendWebhook("SALE", {
+        listName: list.name,
+        items: list.items.map(i => {
+          const a = articles.find(a => a.sku === i.sku);
+          return { sku: i.sku, ean: a?.ean || "", name: i.name, qty: i.qty, price: i.price };
+        }),
+        total
+      });
       list.items = [];
       saveState(); renderSales();
       showNotification(`Verkauf "${list.name}" abgeschlossen`);
@@ -1307,22 +1390,64 @@ function renderSales() {
 // ── WEBHOOK ───────────────────────────────────────────────────────────────
 async function sendWebhook(action, data) {
   if (!WEBHOOK_URL) return;
+  const art = data.art || null;
+  const payload = {
+    action,
+    messe:     messeLabel,
+    user:      currentUser,
+    uuid:      genUUID(),
+    sku:       data.sku  || art?.sku  || "",
+    ean:       data.ean  || art?.ean  || "",
+    artName:   data.artName || art?.name || "",
+    ref:       data.ref  || "",
+  };
+
+  switch (action) {
+    case "PLAN":
+      payload.qty = data.qty || 0;
+      break;
+    case "PLAN_ADJUST":
+      payload.diff = data.diff || 0;
+      break;
+    case "COMMIT":
+      payload.qty = data.qty || 0;
+      break;
+    case "COMMIT_UNDO":
+      payload.undoQty = data.undoQty || 0;
+      break;
+    case "REMOVE":
+      payload.currentPlanned = data.currentPlanned || 0;
+      break;
+    case "SALE":
+      payload.items    = data.items    || [];
+      payload.listName = data.listName || "";
+      break;
+  }
+
   try {
     await fetch(WEBHOOK_URL, {
-      method: "POST",
-      mode: "no-cors",
+      method:  "POST",
+      mode:    "no-cors",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action,
-        messe:     messeLabel,
-        timestamp: new Date().toISOString(),
-        ...data,
-        sku:       data.sku || data.art?.sku || "",
-        artName:   data.art?.name || "",
-        ean:       data.art?.ean  || "",
-      })
+      body:    JSON.stringify(payload),
     });
   } catch(e) { console.warn("Webhook:", e); }
+}
+
+// Planung senden: PLAN (erste Planung) oder PLAN_ADJUST (Änderung)
+async function sendPlanWebhook(sku, oldQty, newQty, art) {
+  if (!WEBHOOK_URL) return;
+  if (oldQty === 0 && newQty > 0) {
+    // Erste Planung
+    await sendWebhook("PLAN", { sku, qty: newQty, art });
+  } else if (newQty === 0) {
+    // Komplett entfernt
+    await sendWebhook("REMOVE", { sku, currentPlanned: oldQty, art });
+  } else {
+    // Mengenänderung: Differenz schicken
+    const diff = newQty - oldQty;
+    if (diff !== 0) await sendWebhook("PLAN_ADJUST", { sku, diff, art });
+  }
 }
 
 function fmtEur(v) {
@@ -1396,8 +1521,8 @@ document.querySelectorAll(".role-btn").forEach(b => b.addEventListener("click", 
 }));
 
 qs("#btn-reload").addEventListener("click", () => {
-  if (!confirm("Artikelstammdaten neu laden? Planung, Kommission und Verkaufslisten bleiben erhalten.")) return;
-  loadSheet();
+  if (!confirm("Artikelstammdaten + Stand neu laden?")) return;
+  loadSheet().then(() => { if (WEBHOOK_URL) loadRemoteState(); });
 });
 
 qs("#btn-settings").addEventListener("click", () => {
@@ -1416,10 +1541,16 @@ qs("#btn-save-settings").addEventListener("click", () => {
   SHEET_ID    = qs("#inp-sheet-id").value.trim();
   WEBHOOK_URL = qs("#inp-webhook").value.trim();
   qs("#messe-label-display").textContent = messeLabel;
-  saveState();
+  saveUIState();
   qs("#settings-panel").style.display = "none";
   showNotification("Einstellungen gespeichert");
-  if (articles.length === 0 && SHEET_ID) loadSheet();
+  if (articles.length === 0 && SHEET_ID) {
+    loadSheet().then(() => {
+      if (WEBHOOK_URL) { ensureUser(); loadRemoteState(); startAutoRefresh(); }
+    });
+  } else if (WEBHOOK_URL) {
+    ensureUser(); loadRemoteState(); startAutoRefresh();
+  }
 });
 
 qs("#btn-test-webhook").addEventListener("click", async () => {
@@ -1438,11 +1569,19 @@ qs("#btn-test-webhook").addEventListener("click", async () => {
 });
 
 // ── START ─────────────────────────────────────────────────────────────────
-loadState();
+loadUIState();
 qs("#messe-label-display").textContent = messeLabel;
 document.querySelector(`.role-btn[data-role="${role}"]`)?.classList.add("btn-info");
 renderView();
-if (SHEET_ID) loadSheet();
+if (SHEET_ID) {
+  loadSheet().then(() => {
+    if (WEBHOOK_URL) {
+      ensureUser();
+      loadRemoteState();
+      startAutoRefresh();
+    }
+  });
+}
 </script>
 </body>
 </html>
