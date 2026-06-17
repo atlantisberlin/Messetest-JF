@@ -181,21 +181,48 @@ function parseCSVLine(line) {
   return cols;
 }
 
+// Standort-Spalten – werden automatisch erkannt (alles nach ATLOSURL)
+const KNOWN_COLS = ["SKU","EAN","NAME","KATEGORIE","EKNETTO","UVPBRUTTO","VKBRUTTO",
+  "MINDESTVK","LIEFERANT","IMAGE_GROSS","IMAGE_NORMAL","IMAGE_MINI","ATLOSURL"];
+
 function csvToArticles(csv) {
   const lines=csv.trim().split(/\r?\n/).filter(l=>l.trim());
   if(lines.length<2) return [];
   const headers=parseCSVLine(lines[0]).map(h=>h.replace(/^"|"$/g,"").toUpperCase().trim());
+  // Stopp wenn wir auf das Kommissionierungs-Sheet treffen (2. Headerzeile)
+  const articleLines = [];
+  for(let i=1;i<lines.length;i++){
+    const first = parseCSVLine(lines[i])[0]?.replace(/^"|"$/g,"").trim();
+    if(first==="ZEITSTEMPEL"||first==="Zeitstempel") break;
+    articleLines.push(lines[i]);
+  }
   const idx=k=>headers.indexOf(k);
-  return lines.slice(1).map((line,i)=>{
+  // Standort-Spalten = alle Spalten nach ATLOSURL
+  const atlosPos = idx("ATLOSURL");
+  const locationCols = atlosPos>=0 ? headers.slice(atlosPos+1) : [];
+
+  return articleLines.map((line,i)=>{
     const c=parseCSVLine(line).map(v=>v.replace(/^"|"$/g,"").trim());
     if(!c[idx("SKU")]) return null;
+    // Gesamtbestand = Summe aller Standort-Spalten
+    const locationStock = {};
+    let totalStock = 0;
+    locationCols.forEach(col=>{
+      const v = parseNum(c[idx(col)]);
+      locationStock[col] = v;
+      totalStock += v;
+    });
     return {
       id:i+1, sku:c[idx("SKU")]||"", ean:c[idx("EAN")]||"",
       name:c[idx("NAME")]||"", category:c[idx("KATEGORIE")]||"",
       costPrice:parseNum(c[idx("EKNETTO")]), uvp:parseNum(c[idx("UVPBRUTTO")]),
       price:parseNum(c[idx("VKBRUTTO")]), minPrice:parseNum(c[idx("MINDESTVK")]),
-      supplier:c[idx("LIEFERANT")]||"", stock:parseNum(c[idx("QUANTITY")]),
-      image:c[idx("IMAGE")]||"", atlosId:c[idx("ATLOSID")]||"",
+      supplier:c[idx("LIEFERANT")]||"",
+      stock: totalStock,
+      locationStock,   // { ZL:1, CO:2, ST:0, ... }
+      locationCols,    // ["ZL","CO","ST","FB","HH"]
+      image: c[idx("IMAGE_NORMAL")] || c[idx("IMAGE_GROSS")] || "",
+      atlosUrl: c[idx("ATLOSURL")]||"",
     };
   }).filter(Boolean);
 }
@@ -297,8 +324,12 @@ function renderPrep() {
           <div class="muted">${art.ean?"EAN: "+art.ean+" · ":""}VK: ${fmtEur(art.price)} · Min: ${fmtEur(art.minPrice)}</div>
         </div>
         <div style="text-align:right;font-size:12px;flex-shrink:0;">
-          <div style="color:var(--text2);">Lager</div>
+          <div style="color:var(--text2);">Gesamt</div>
           <div style="font-weight:500;">${art.stock}</div>
+          ${art.locationCols&&art.locationCols.length>0?`
+          <div style="margin-top:4px;font-size:10px;color:var(--text2);">
+            ${art.locationCols.map(l=>`${l}:${art.locationStock[l]||0}`).join(" · ")}
+          </div>`:""}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -391,14 +422,15 @@ function renderWarehouse() {
             method:"POST", mode:"no-cors",
             headers:{"Content-Type":"application/json"},
             body: JSON.stringify({
-              messe:     messeLabel,
-              sku:       art.sku,
-              ean:       art.ean,
-              name:      art.name,
-              qty:       entnahme,
-              ref:       ref,
-              planned:   planned[id]||0,
-              committed: committed[id]||0
+              messe:         messeLabel,
+              sku:           art.sku,
+              ean:           art.ean,
+              name:          art.name,
+              qty:           entnahme,
+              ref:           ref,
+              planned:       planned[id]||0,
+              committed:     committed[id]||0,
+              locationStock: art.locationStock||{}
             })
           });
         } catch(e) { console.warn("Webhook fehlgeschlagen:", e); }
