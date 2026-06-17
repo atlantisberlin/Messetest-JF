@@ -139,17 +139,15 @@
 <script>
 // ── KONFIGURATION ──────────────────────────────────────────────────────────
 // Spaltenreihenfolge im Google Sheet (0-basiert, Zeile 1 = Header):
-// SKU · EAN · NAME · KATEGORIE · EKNETTO · UVPBRUTTO · VKBRUTTO · MINDESTVK · LIEFERANT · QUANTITY · IMAGE · PRODUCTS_ID
-const COL = { SKU:0, EAN:1, NAME:2, KATEGORIE:3, EKNETTO:4, UVPBRUTTO:5, VKBRUTTO:6, MINDESTVK:7, LIEFERANT:8, QUANTITY:9, IMAGE:10, PRODUCTS_ID:11 };
+// SKU · EAN · NAME · KATEGORIE · EKNETTO · UVPBRUTTO · VKBRUTTO · MINDESTVK · LIEFERANT · QUANTITY · IMAGE · PRODUCTS_ID · MASTER_ID
+const COL = { SKU:0, EAN:1, NAME:2, KATEGORIE:3, EKNETTO:4, UVPBRUTTO:5, VKBRUTTO:6, MINDESTVK:7, LIEFERANT:8, QUANTITY:9, IMAGE:10, PRODUCTS_ID:11, MASTER_ID:12 };
 
 const qs = s => document.querySelector(s);
 
 // ── STATE ──────────────────────────────────────────────────────────────────
-let articles       = [];    // alle Artikel aus Google Sheets (im Speicher)
-let masterSlaveMap = {};    // { slave_products_id  →  master_products_id }
-let slavesByMaster = {};    // { master_products_id →  [slave_products_id, ...] }
-let masterSet      = new Set(); // products_ids die als Master fungieren (haben Slaves)
-let artByPid       = {};    // { products_id → article } – schneller Lookup
+let articles    = [];   // alle Artikel aus Google Sheets (im Speicher)
+let artBySku    = {};   // { sku → article } – schneller Lookup
+let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut nach dem Laden
 
 let messeLabel  = "Messe-Tool";
 let SHEET_ID    = "";
@@ -226,29 +224,36 @@ async function loadSheet() {
       .filter(r => r[COL.SKU] && r[COL.SKU].trim())
       .map(r => ({
         sku:        r[COL.SKU].trim(),
-        ean:        r[COL.EAN]?.trim()       || "",
-        name:       r[COL.NAME]?.trim()      || "",
-        category:   r[COL.KATEGORIE]?.trim() || "",
-        costPrice:  parseFloat(r[COL.EKNETTO])   || 0,
-        uvp:        parseFloat(r[COL.UVPBRUTTO]) || 0,
-        price:      parseFloat(r[COL.VKBRUTTO])  || 0,
-        minPrice:   parseFloat(r[COL.MINDESTVK]) || 0,
-        supplier:   r[COL.LIEFERANT]?.trim() || "",
-        stock:      parseInt(r[COL.QUANTITY])    || 0,
-        image:      r[COL.IMAGE]?.trim()     || "",
+        ean:        r[COL.EAN]?.trim()        || "",
+        name:       r[COL.NAME]?.trim()       || "",
+        category:   r[COL.KATEGORIE]?.trim()  || "",
+        costPrice:  parseFloat(r[COL.EKNETTO])    || 0,
+        uvp:        parseFloat(r[COL.UVPBRUTTO])  || 0,
+        price:      parseFloat(r[COL.VKBRUTTO])   || 0,
+        minPrice:   parseFloat(r[COL.MINDESTVK])  || 0,
+        supplier:   r[COL.LIEFERANT]?.trim()  || "",
+        stock:      parseInt(r[COL.QUANTITY])     || 0,
+        image:      r[COL.IMAGE]?.trim()      || "",
         productsId: r[COL.PRODUCTS_ID]?.trim() || "",
+        masterId:   r[COL.MASTER_ID]?.trim()   || "",  // SKU des Masters, leer wenn kein Slave
       }));
 
-    // Schnell-Lookup per productsId aufbauen
-    artByPid = {};
-    articles.forEach(a => { if (a.productsId) artByPid[a.productsId] = a; });
+    // Schnell-Lookups aufbauen
+    artBySku    = {};
+    slavesBySku = {};
+    articles.forEach(a => {
+      artBySku[a.sku] = a;
+    });
+    // Slaves gruppieren: masterId → [slave, slave, ...]
+    articles.forEach(a => {
+      if (a.masterId) {
+        if (!slavesBySku[a.masterId]) slavesBySku[a.masterId] = [];
+        slavesBySku[a.masterId].push(a);
+      }
+    });
 
     qs("#art-count").textContent = articles.length;
     qs("#btn-reload").style.display = "flex";
-    showNotification(`${articles.length} Artikel geladen – lade Master-Slave…`, "ok");
-
-    await loadMasterSlave();
-
     showNotification(`${articles.length} Artikel geladen`);
     renderView();
   } catch(e) {
@@ -256,45 +261,18 @@ async function loadSheet() {
   }
 }
 
-async function loadMasterSlave() {
-  try {
-    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Master-Slave`;
-    const resp = await fetch(url);
-    if (!resp.ok) return;
-    const csv  = await resp.text();
-    const rows = parseCSV(csv);
-
-    masterSlaveMap = {};
-    slavesByMaster = {};
-    masterSet      = new Set();
-
-    // Spalten: [0] products_attributes_options_id (Master-PID), [1] products_id (Slave-PID)
-    rows.slice(1).forEach(r => {
-      const masterPid = r[0]?.trim();
-      const slavePid  = r[1]?.trim();
-      if (!masterPid || !slavePid) return;
-      masterSlaveMap[slavePid] = masterPid;
-      if (!slavesByMaster[masterPid]) slavesByMaster[masterPid] = [];
-      slavesByMaster[masterPid].push(slavePid);
-      masterSet.add(masterPid);
-    });
-  } catch(e) {
-    console.warn("Master-Slave nicht geladen:", e);
-  }
-}
-
 // Hilfsfunktionen Master/Slave
+// Master = Artikel auf den mindestens ein anderer via masterId verweist
 function isMaster(art) {
-  return art.productsId && masterSet.has(art.productsId);
+  return !!slavesBySku[art.sku];
 }
+// Slaves eines Masters (direkt via slavesBySku)
 function getSlavesOf(art) {
-  if (!art.productsId) return [];
-  return (slavesByMaster[art.productsId] || []).map(pid => artByPid[pid]).filter(Boolean);
+  return slavesBySku[art.sku] || [];
 }
+// Master eines Slave-Artikels (via masterId → artBySku)
 function getMasterOf(art) {
-  if (!art.productsId) return null;
-  const masterPid = masterSlaveMap[art.productsId];
-  return masterPid ? (artByPid[masterPid] || null) : null;
+  return art.masterId ? (artBySku[art.masterId] || null) : null;
 }
 
 function parseCSV(text) {
