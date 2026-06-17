@@ -477,9 +477,9 @@ function renderMerklisteView() {
   categories.forEach(cat => {
     const slaves = [...byCategory[cat]];
 
-    // Kategorie-Statistik
-    const catDone  = slaves.filter(a => commitDone[a.sku]).length;
-    const catOffen = slaves.filter(a => !commitDone[a.sku]).length;
+    // Kategorie-Statistik – live berechnet
+    const catDone  = slaves.filter(a => (planned[a.sku] || 0) > 0 && (committed[a.sku] || 0) >= (planned[a.sku] || 0)).length;
+    const catOffen = slaves.filter(a => !((committed[a.sku] || 0) >= (planned[a.sku] || 0))).length;
     const catCollapsed = merklisteCollapsed[cat] || false;
 
     // Kategorie-Header
@@ -531,11 +531,11 @@ function _renderMasterGroup(wrap, master, plannedSlaves) {
   const allSlaves = master ? getSlavesOf(master) : plannedSlaves;
   const unplannedSlaves = allSlaves.filter(a => !(planned[a.sku] || 0));
 
-  // Statistik für geplante Slaves
+  // Statistik für geplante Slaves – live berechnet
   const totalQty  = plannedSlaves.reduce((s, a) => s + (planned[a.sku] || 0), 0);
   const totalComm = plannedSlaves.reduce((s, a) => s + (committed[a.sku] || 0), 0);
-  const allDone   = plannedSlaves.every(a => commitDone[a.sku]);
-  const anyDone   = plannedSlaves.some(a => commitDone[a.sku]);
+  const allDone   = plannedSlaves.every(a => (planned[a.sku] || 0) > 0 && (committed[a.sku] || 0) >= (planned[a.sku] || 0));
+  const anyDone   = plannedSlaves.some(a => (planned[a.sku] || 0) > 0 && (committed[a.sku] || 0) >= (planned[a.sku] || 0));
   const pct       = totalQty > 0 ? Math.round((totalComm / totalQty) * 100) : 0;
 
   const masterSku     = master ? master.sku : plannedSlaves[0]?.sku;
@@ -585,8 +585,10 @@ function _renderMasterGroup(wrap, master, plannedSlaves) {
 
   // Geplante Slaves zuerst – sortiert: fertig zuerst, dann offen
   const sortedPlanned = [...plannedSlaves].sort((a, b) => {
-    if (commitDone[a.sku] && !commitDone[b.sku]) return -1;
-    if (!commitDone[a.sku] && commitDone[b.sku]) return 1;
+    const aDone = (planned[a.sku] || 0) > 0 && (committed[a.sku] || 0) >= (planned[a.sku] || 0);
+    const bDone = (planned[b.sku] || 0) > 0 && (committed[b.sku] || 0) >= (planned[b.sku] || 0);
+    if (aDone && !bDone) return -1;
+    if (!aDone && bDone) return 1;
     return a.name.localeCompare(b.name, "de");
   });
 
@@ -615,7 +617,11 @@ function _renderSlaveRow(container, slave, isPlanned) {
   const sku    = slave.sku;
   const qty    = planned[sku] || 0;
   const comm   = committed[sku] || 0;
-  const done   = commitDone[sku] || false;
+  // done live berechnen: committed >= planned (und qty > 0), nicht nur auf commitDone-Flag verlassen
+  const done   = qty > 0 && comm >= qty;
+  // commitDone konsistent halten
+  if (done) commitDone[sku] = true;
+  else delete commitDone[sku];
   const offen  = Math.max(0, qty - comm);
 
   const row = document.createElement("div");
