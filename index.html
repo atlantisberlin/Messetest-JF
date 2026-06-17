@@ -510,8 +510,26 @@ function renderMerklisteView() {
 
 // ── GETEILTE DETAILANSICHT (Prep + Merkliste nutzen dieselbe Funktion) ─────
 function renderDetailView(wrap, detailSku, onBack) {
-  const art = articles.find(a => a.sku === detailSku);
-  if (!art) { onBack(); return; }
+  try {
+    const art = articles.find(a => a.sku === detailSku);
+    if (!art) {
+      console.warn("renderDetailView: Artikel nicht gefunden für SKU:", detailSku);
+      onBack(); return;
+    }
+    _renderDetailViewInner(wrap, art, onBack);
+  } catch(e) {
+    console.error("renderDetailView Fehler:", e);
+    wrap.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Fehler beim Laden: ${e.message}</div>`;
+    const backBtn = document.createElement("button");
+    backBtn.className = "btn btn-sm";
+    backBtn.style.marginBottom = "12px";
+    backBtn.innerHTML = `<i class="ti ti-arrow-left"></i> Zurück`;
+    backBtn.onclick = onBack;
+    wrap.insertBefore(backBtn, wrap.firstChild);
+  }
+}
+
+function _renderDetailViewInner(wrap, art, onBack) {
 
   // Alle Geschwister ermitteln:
   // Falls der angeklickte Artikel selbst eine masterId hat → alle mit gleicher masterId
@@ -581,21 +599,24 @@ function renderDetailView(wrap, detailSku, onBack) {
   slavesWrap.id = "detail-slaves";
   wrap.appendChild(slavesWrap);
 
-  // Qty für angeklickten Artikel
+  // Qty für angeklickten Artikel – jetzt sicher im DOM
   const updateMainQty = (sku, neu) => {
     if (neu === 0) delete planned[sku]; else planned[sku] = neu;
     saveState();
     sendWebhook("PLAN_UPDATE", { sku, qty: neu, art });
   };
-  qs("#d-minus").onclick = () => {
+  const dMinus = wrap.querySelector("#d-minus");
+  const dPlus  = wrap.querySelector("#d-plus");
+  const dQty   = wrap.querySelector("#d-qty");
+  if (dMinus) dMinus.onclick = () => {
     const neu = Math.max(0, (planned[art.sku] || 0) - 1);
-    qs("#d-qty").value = neu; updateMainQty(art.sku, neu);
+    if (dQty) dQty.value = neu; updateMainQty(art.sku, neu);
   };
-  qs("#d-plus").onclick = () => {
+  if (dPlus) dPlus.onclick = () => {
     const neu = (planned[art.sku] || 0) + 1;
-    qs("#d-qty").value = neu; updateMainQty(art.sku, neu);
+    if (dQty) dQty.value = neu; updateMainQty(art.sku, neu);
   };
-  qs("#d-qty").addEventListener("change", function() {
+  if (dQty) dQty.addEventListener("change", function() {
     updateMainQty(art.sku, Math.max(0, parseInt(this.value) || 0));
   });
 
