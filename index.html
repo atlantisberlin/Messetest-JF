@@ -526,10 +526,14 @@ function renderDetailView(wrap, detailSku, onBack) {
   }
   siblings.sort((a, b) => a.name.localeCompare(b.name, "de"));
 
-  wrap.innerHTML = `
-    <button class="btn btn-sm" id="btn-detail-back" style="margin-bottom:12px;">
-      <i class="ti ti-arrow-left"></i> Zurück
-    </button>`;
+  wrap.innerHTML = "";
+
+  const backBtn = document.createElement("button");
+  backBtn.className = "btn btn-sm";
+  backBtn.style.marginBottom = "12px";
+  backBtn.innerHTML = `<i class="ti ti-arrow-left"></i> Zurück`;
+  backBtn.onclick = onBack;
+  wrap.appendChild(backBtn);
 
   // Angeklickten Artikel hervorgehoben anzeigen
   const mainCard = document.createElement("div");
@@ -576,8 +580,6 @@ function renderDetailView(wrap, detailSku, onBack) {
   const slavesWrap = document.createElement("div");
   slavesWrap.id = "detail-slaves";
   wrap.appendChild(slavesWrap);
-
-  qs("#btn-detail-back").onclick = onBack;
 
   // Qty für angeklickten Artikel
   const updateMainQty = (sku, neu) => {
@@ -726,7 +728,7 @@ function runPrepSearch() {
       <div style="display:flex;gap:10px;align-items:flex-start;">
         ${imgTag(art, 52)}
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${art.name}</div>
+          <div style="font-weight:500;font-size:13px;line-height:1.3;margin-bottom:2px;">${art.name}</div>
           <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""} · ${art.category}</div>
           <div class="muted">VK: ${fmtEur(art.price)}${master ? ` · <span style="color:var(--info);">Variante</span>` : ""}</div>
           ${stockGrid(art.stocks, true)}
@@ -1153,19 +1155,15 @@ function stockGrid(stocks, small = false) {
   </div>`;
 }
 
-// Produktbild aus IMAGE_MINI mit Fallback-Icon
+// Produktbild aus IMAGE_MINI mit Fallback-Icon – immer ein einzelnes Element
 function imgTag(art, size = 56) {
-  if (!art.image) {
-    return `<div style="width:${size}px;height:${size}px;border-radius:var(--r);border:0.5px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-      <i class="ti ti-photo-off" style="font-size:${Math.round(size*0.4)}px;color:var(--text2);" aria-hidden="true"></i>
-    </div>`;
-  }
-  return `<img src="${art.image}" loading="lazy"
-    style="width:${size}px;height:${size}px;object-fit:contain;border-radius:var(--r);border:0.5px solid var(--border);background:var(--bg2);flex-shrink:0;"
-    onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
-    alt="" />
-  <div style="display:none;width:${size}px;height:${size}px;border-radius:var(--r);border:0.5px solid var(--border);background:var(--bg2);align-items:center;justify-content:center;flex-shrink:0;">
-    <i class="ti ti-photo-off" style="font-size:${Math.round(size*0.4)}px;color:var(--text2);" aria-hidden="true"></i>
+  const placeholder = `<div style="width:${size}px;height:${size}px;border-radius:var(--r);border:0.5px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="ti ti-photo-off" style="font-size:${Math.round(size*0.4)}px;color:var(--text2);" aria-hidden="true"></i></div>`;
+  if (!art.image) return placeholder;
+  return `<div style="width:${size}px;height:${size}px;flex-shrink:0;">
+    <img src="${art.image}" loading="lazy"
+      style="width:${size}px;height:${size}px;object-fit:contain;border-radius:var(--r);border:0.5px solid var(--border);background:var(--bg2);"
+      onerror="this.parentElement.innerHTML='<div style=\\'width:${size}px;height:${size}px;border-radius:var(--r);border:0.5px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:center;\\'><i class=\\'ti ti-photo-off\\' style=\\'font-size:${Math.round(size*0.4)}px;color:var(--text2);\\'></i></div>'"
+      alt="" />
   </div>`;
 }
 
