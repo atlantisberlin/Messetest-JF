@@ -55,7 +55,16 @@
     .notif-warn{background:var(--warn-bg);color:var(--warn);}
     .notif-err{background:var(--err-bg);color:var(--err);}
     #settings-panel{display:none;padding:12px 16px;border-bottom:0.5px solid var(--border);background:var(--bg2);}
-    #view-prep,#view-warehouse,#view-sales{display:none;}
+    #view-prep,#view-merkliste,#view-warehouse,#view-sales{display:none;}
+    /* Lade-Overlay */
+    #loading-overlay{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;}
+    #loading-overlay.hidden{display:none;}
+    .loading-spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--info);border-radius:50%;animation:spin .8s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+    .loading-step{font-size:14px;color:var(--text2);text-align:center;max-width:280px;}
+    .loading-title{font-size:18px;font-weight:600;color:var(--text);}
+    .loading-bar-wrap{width:240px;height:4px;background:var(--bg2);border-radius:2px;overflow:hidden;}
+    .loading-bar{height:100%;background:var(--info);border-radius:2px;transition:width .5s ease;}
     .search-bar{position:relative;margin-bottom:8px;}
     .search-bar input{padding-left:32px;}
     .search-bar i{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text2);font-size:16px;pointer-events:none;}
@@ -84,6 +93,13 @@
   </style>
 </head>
 <body>
+<div id="loading-overlay">
+  <i class="ti ti-anchor" style="font-size:36px;color:var(--info);"></i>
+  <div class="loading-title">Messe-Tool</div>
+  <div class="loading-spinner"></div>
+  <div class="loading-bar-wrap"><div class="loading-bar" id="loading-bar" style="width:0%"></div></div>
+  <div class="loading-step" id="loading-step">Initialisiere…</div>
+</div>
 <div id="app">
   <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px 0;">
     <div style="font-weight:600;font-size:17px;display:flex;align-items:center;gap:7px;">
@@ -108,10 +124,13 @@
     <div style="font-size:13px;font-weight:500;margin-bottom:10px;">Einstellungen</div>
     <label class="muted" style="display:block;margin-bottom:2px;">Messe-Bezeichnung</label>
     <input type="text" id="inp-messe-label" placeholder="z.B. Boot Düsseldorf 2026" style="margin-bottom:8px;" />
-    <label class="muted" style="display:block;margin-bottom:2px;">Google Sheets ID (Artikelstammdaten)</label>
-    <input type="text" id="inp-sheet-id" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms" style="margin-bottom:8px;" />
     <label class="muted" style="display:block;margin-bottom:2px;">Webhook-URL (Google Apps Script)</label>
     <input type="text" id="inp-webhook" placeholder="https://script.google.com/macros/s/..." style="margin-bottom:8px;" />
+    <label class="muted" style="display:block;margin-bottom:2px;">Artikel-Cache</label>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <span class="muted" id="cache-info">–</span>
+      <button id="btn-clear-cache" class="btn-sm btn-danger"><i class="ti ti-trash"></i> Cache leeren</button>
+    </div>
     <div style="display:flex;gap:8px;">
       <button id="btn-save-settings" class="btn btn-info" style="flex:1;">Speichern</button>
       <button id="btn-test-webhook" class="btn" style="flex:1;">Webhook testen</button>
@@ -157,7 +176,6 @@ let artBySku    = {};   // { sku → article } – schneller Lookup
 let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut nach dem Laden
 
 let messeLabel  = "Messe-Tool";
-let SHEET_ID    = "";
 let WEBHOOK_URL = "";
 let role        = "standard";
 let currentView = "prep";
@@ -195,7 +213,7 @@ function genUUID() {
 function saveUIState() {
   const s = {
     salesLists, activeSales,
-    messeLabel, SHEET_ID, WEBHOOK_URL, role, currentUser,
+    messeLabel, WEBHOOK_URL, role, currentUser,
     merklisteCollapsed, masterCollapsed
   };
   try { localStorage.setItem("messetool_ui", JSON.stringify(s)); } catch(e){}
@@ -204,14 +222,12 @@ function saveUIState() {
 function loadUIState() {
   try {
     const raw = localStorage.getItem("messetool_ui");
-    // Auch altes Format lesen (messetool_v2) für nahtlose Migration
     const old = localStorage.getItem("messetool_v2");
     const src = raw ? JSON.parse(raw) : (old ? JSON.parse(old) : null);
     if (!src) return;
     salesLists  = src.salesLists  || [];
     activeSales = src.activeSales || null;
     messeLabel  = src.messeLabel  || "Messe-Tool";
-    SHEET_ID    = src.SHEET_ID    || "";
     WEBHOOK_URL = src.WEBHOOK_URL || "";
     role        = src.role        || "standard";
     currentUser = src.currentUser || "";
@@ -278,84 +294,148 @@ function ensureUser() {
   saveUIState();
 }
 
-// ── GOOGLE SHEETS LADEN ───────────────────────────────────────────────────
-async function loadSheet() {
-  if (!SHEET_ID) {
-    showNotification("Bitte zuerst die Google Sheets ID in den Einstellungen hinterlegen.", "warn");
-    return;
-  }
-  showNotification("Lade Artikelstammdaten…", "ok");
+// ── LADE-OVERLAY ──────────────────────────────────────────────────────────
+function setLoadingStep(msg, pct) {
+  const stepEl = qs("#loading-step");
+  const barEl  = qs("#loading-bar");
+  if (stepEl) stepEl.textContent = msg;
+  if (barEl)  barEl.style.width  = pct + "%";
+}
+function showLoading() {
+  const ol = qs("#loading-overlay");
+  if (ol) ol.classList.remove("hidden");
+}
+function hideLoading() {
+  const ol = qs("#loading-overlay");
+  if (ol) ol.classList.add("hidden");
+}
+
+// ── ARTIKEL-CACHE ──────────────────────────────────────────────────────────
+const CACHE_KEY     = "messetool_articles_v1";
+const CACHE_MAX_AGE = 60 * 60 * 1000; // 1 Stunde in ms
+
+function getCachedArticles() {
   try {
-    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Artikelstammdaten`;
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    const csv  = await resp.text();
-    const rows = parseCSV(csv);
-    if (rows.length < 2) throw new Error("Keine Daten");
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw);
+    if (Date.now() - ts > CACHE_MAX_AGE) return null;
+    return data;
+  } catch(e) { return null; }
+}
 
-    articles = rows.slice(1)
-      .filter(r => r[COL.SKU] && r[COL.SKU].trim())
-      .map(r => {
-        const zl = parseInt(r[COL.ZL]) || 0;
-        const co = parseInt(r[COL.CO]) || 0;
-        const st = parseInt(r[COL.ST]) || 0;
-        const fb = parseInt(r[COL.FB]) || 0;
-        const hh = parseInt(r[COL.HH]) || 0;
-        return {
-          sku:        r[COL.SKU].trim(),
-          ean:        r[COL.EAN]?.trim()        || "",
-          name:       r[COL.NAME]?.trim()       || "",
-          category:   r[COL.KATEGORIE]?.trim()  || "",
-          costPrice:  parseFloat(r[COL.EKNETTO])    || 0,
-          uvp:        parseFloat(r[COL.UVPBRUTTO])  || 0,
-          price:      parseFloat(r[COL.VKBRUTTO])   || 0,
-          minPrice:   parseFloat(r[COL.MINDESTVK])  || 0,
-          supplier:   r[COL.LIEFERANT]?.trim()  || "",
-          stock:      zl + co + st + fb + hh,   // Gesamtbestand
-          stocks:     { zl, co, st, fb, hh },   // Einzelbestände
-          image:      r[COL.IMAGE_MINI]?.trim()  || "",
-          productsId: r[COL.PRODUCTS_ID]?.trim() || "",
-          masterId:   r[COL.MASTER_ID]?.trim()   || "",
-        };
-      });
+function setCachedArticles(data) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+  } catch(e) { console.warn("Cache speichern fehlgeschlagen:", e); }
+}
 
-    // Schnell-Lookups aufbauen
-    artBySku    = {};
-    slavesBySku = {};
-    articles.forEach(a => {
-      artBySku[a.sku] = a;
-    });
-    // Slaves gruppieren: masterId → [slave, slave, ...]
-    articles.forEach(a => {
-      if (a.masterId) {
-        if (!slavesBySku[a.masterId]) slavesBySku[a.masterId] = [];
-        slavesBySku[a.masterId].push(a);
+function clearArticleCache() {
+  localStorage.removeItem(CACHE_KEY);
+}
+
+function getCacheInfo() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw);
+    const age  = Math.round((Date.now() - ts) / 60000);
+    const left = Math.max(0, Math.round((CACHE_MAX_AGE - (Date.now() - ts)) / 60000));
+    return { ts, count: data.length, ageMins: age, leftMins: left };
+  } catch(e) { return null; }
+}
+
+// ── ARTIKEL LADEN (BigQuery via Apps Script) ──────────────────────────────
+async function loadArticles(forceReload = false) {
+  showLoading();
+
+  try {
+    // Cache prüfen
+    if (!forceReload) {
+      setLoadingStep("Prüfe Artikel-Cache…", 10);
+      await sleep(200);
+      const cached = getCachedArticles();
+      if (cached && cached.length > 0) {
+        setLoadingStep(`Cache gefunden – ${cached.length} Artikel laden…`, 40);
+        await sleep(100);
+        buildArticleLookups(cached);
+        setLoadingStep(`${articles.length} Artikel aus Cache geladen`, 70);
+        await sleep(100);
+        return true;
       }
-    });
+    }
 
-    qs("#art-count").textContent = articles.length;
-    qs("#btn-reload").style.display = "flex";
-    showNotification(`${articles.length} Artikel geladen`);
-    renderView();
+    // BigQuery via Apps Script laden
+    if (!WEBHOOK_URL) {
+      hideLoading();
+      showNotification("Bitte zuerst die Webhook-URL in den Einstellungen hinterlegen.", "warn");
+      return false;
+    }
+
+    setLoadingStep("Verbinde mit BigQuery…", 15);
+    await sleep(200);
+
+    setLoadingStep("Lade Artikeldaten aus BigQuery…\n(kann 15–30 Sekunden dauern)", 25);
+
+    // Ladeanimation während Wartezeit
+    let fakeProgress = 25;
+    const progressInterval = setInterval(() => {
+      fakeProgress = Math.min(fakeProgress + 1, 75);
+      qs("#loading-bar") && (qs("#loading-bar").style.width = fakeProgress + "%");
+    }, 500);
+
+    const resp = await fetch(WEBHOOK_URL + "?action=articles");
+    clearInterval(progressInterval);
+
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const json = await resp.json();
+    if (!json.ok) throw new Error(json.error || "BigQuery-Fehler");
+
+    const rawArticles = json.articles || [];
+    setLoadingStep(`${rawArticles.length} Artikel empfangen – verarbeite…`, 80);
+    await sleep(100);
+
+    // Cache speichern
+    setCachedArticles(rawArticles);
+
+    // Lookups aufbauen
+    buildArticleLookups(rawArticles);
+    setLoadingStep(`${articles.length} Artikel bereit`, 95);
+    await sleep(200);
+
+    return true;
+
   } catch(e) {
+    hideLoading();
     showNotification("Fehler beim Laden: " + e.message, "err");
+    console.error("loadArticles:", e);
+    return false;
   }
 }
+
+function buildArticleLookups(rawArticles) {
+  articles    = rawArticles;
+  artBySku    = {};
+  slavesBySku = {};
+  articles.forEach(a => { artBySku[a.sku] = a; });
+  articles.forEach(a => {
+    if (a.masterId) {
+      if (!slavesBySku[a.masterId]) slavesBySku[a.masterId] = [];
+      slavesBySku[a.masterId].push(a);
+    }
+  });
+  qs("#art-count").textContent = articles.length;
+  qs("#btn-reload").style.display = "flex";
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // Hilfsfunktionen Master/Slave
-// Master = Artikel auf den mindestens ein anderer via masterId verweist
-function isMaster(art) {
-  return !!slavesBySku[art.sku];
-}
-// Slaves eines Masters (direkt via slavesBySku)
-function getSlavesOf(art) {
-  return slavesBySku[art.sku] || [];
-}
-// Master eines Slave-Artikels (via masterId → artBySku)
-function getMasterOf(art) {
-  return art.masterId ? (artBySku[art.masterId] || null) : null;
-}
+function isMaster(art)   { return !!slavesBySku[art.sku]; }
+function getSlavesOf(art){ return slavesBySku[art.sku] || []; }
+function getMasterOf(art){ return art.masterId ? (artBySku[art.masterId] || null) : null; }
 
+// parseCSV bleibt für eventuelle Kompatibilität
 function parseCSV(text) {
   const rows = [];
   let row = [], cell = "", inQ = false;
@@ -1521,36 +1601,41 @@ document.querySelectorAll(".role-btn").forEach(b => b.addEventListener("click", 
 }));
 
 qs("#btn-reload").addEventListener("click", () => {
-  if (!confirm("Artikelstammdaten + Stand neu laden?")) return;
-  loadSheet().then(() => { if (WEBHOOK_URL) loadRemoteState(); });
+  if (!confirm("Artikel neu aus BigQuery laden und Cache leeren?")) return;
+  clearArticleCache();
+  startApp(true);
 });
 
 qs("#btn-settings").addEventListener("click", () => {
   const panel = qs("#settings-panel");
-  const open = panel.style.display === "none";
+  const open  = panel.style.display === "none";
   panel.style.display = open ? "block" : "none";
   if (open) {
     qs("#inp-messe-label").value = messeLabel;
-    qs("#inp-sheet-id").value    = SHEET_ID;
     qs("#inp-webhook").value     = WEBHOOK_URL;
+    // Cache-Info anzeigen
+    const info = getCacheInfo();
+    qs("#cache-info").textContent = info
+      ? `${info.count} Artikel · vor ${info.ageMins} Min. geladen · noch ${info.leftMins} Min. gültig`
+      : "Kein Cache vorhanden";
   }
+});
+
+qs("#btn-clear-cache").addEventListener("click", () => {
+  clearArticleCache();
+  qs("#cache-info").textContent = "Cache geleert";
+  showNotification("Artikel-Cache geleert – beim nächsten Start wird BigQuery abgefragt", "warn");
 });
 
 qs("#btn-save-settings").addEventListener("click", () => {
   messeLabel  = qs("#inp-messe-label").value.trim() || "Messe-Tool";
-  SHEET_ID    = qs("#inp-sheet-id").value.trim();
   WEBHOOK_URL = qs("#inp-webhook").value.trim();
   qs("#messe-label-display").textContent = messeLabel;
   saveUIState();
   qs("#settings-panel").style.display = "none";
   showNotification("Einstellungen gespeichert");
-  if (articles.length === 0 && SHEET_ID) {
-    loadSheet().then(() => {
-      if (WEBHOOK_URL) { ensureUser(); loadRemoteState(); startAutoRefresh(); }
-    });
-  } else if (WEBHOOK_URL) {
-    ensureUser(); loadRemoteState(); startAutoRefresh();
-  }
+  if (articles.length === 0) startApp();
+  else if (WEBHOOK_URL) { ensureUser(); loadRemoteState(); startAutoRefresh(); }
 });
 
 qs("#btn-test-webhook").addEventListener("click", async () => {
@@ -1559,9 +1644,10 @@ qs("#btn-test-webhook").addEventListener("click", async () => {
   if (!url) { status.textContent = "Bitte zuerst eine URL eingeben."; status.style.color = "var(--err)"; return; }
   status.textContent = "Teste…"; status.style.color = "var(--text2)";
   try {
-    await fetch(url, { method: "GET", mode: "no-cors" });
-    status.textContent = "✓ Webhook erreichbar";
-    status.style.color = "var(--ok)";
+    const resp = await fetch(url + "?action=ping");
+    const json = await resp.json();
+    status.textContent = json.ok ? "✓ " + (json.msg || "Verbunden") : "✗ " + json.error;
+    status.style.color = json.ok ? "var(--ok)" : "var(--err)";
   } catch(e) {
     status.textContent = "✗ " + e.message;
     status.style.color = "var(--err)";
@@ -1569,18 +1655,43 @@ qs("#btn-test-webhook").addEventListener("click", async () => {
 });
 
 // ── START ─────────────────────────────────────────────────────────────────
+async function startApp(forceReload = false) {
+  showLoading();
+  setLoadingStep("Einstellungen laden…", 5);
+  await sleep(100);
+
+  // Schritt 1: Artikel laden (Cache oder BigQuery)
+  const ok = await loadArticles(forceReload);
+  if (!ok) return;
+
+  // Schritt 2: Kommissionierungsstand laden
+  if (WEBHOOK_URL) {
+    setLoadingStep("Lade Kommissionierungsstand…", 88);
+    await loadRemoteState(true);
+  }
+
+  // Schritt 3: User sicherstellen
+  setLoadingStep("Fast fertig…", 95);
+  await sleep(100);
+
+  hideLoading();
+  setLoadingStep("", 100);
+
+  ensureUser();
+  renderView();
+  startAutoRefresh();
+}
+
 loadUIState();
 qs("#messe-label-display").textContent = messeLabel;
 document.querySelector(`.role-btn[data-role="${role}"]`)?.classList.add("btn-info");
-renderView();
-if (SHEET_ID) {
-  loadSheet().then(() => {
-    if (WEBHOOK_URL) {
-      ensureUser();
-      loadRemoteState();
-      startAutoRefresh();
-    }
-  });
+
+// App starten wenn Webhook konfiguriert
+if (WEBHOOK_URL) {
+  startApp();
+} else {
+  hideLoading();
+  renderView();
 }
 </script>
 </body>
