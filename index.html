@@ -283,7 +283,8 @@ function showNotification(msg, type="ok") {
   const area = qs("#notification-area");
   clearTimeout(notifTimer);
   area.innerHTML = `<div class="notification notif-${type}">${msg}</div>`;
-  notifTimer = setTimeout(() => area.innerHTML="", 2800);
+  // Fehler länger anzeigen (8s), sonst 3s
+  notifTimer = setTimeout(() => area.innerHTML="", type === "err" ? 8000 : 3000);
 }
 
 // ── USER-DIALOG ───────────────────────────────────────────────────────────
@@ -510,11 +511,12 @@ function renderPrep() {
   const wrap = qs("#view-prep");
 
   if (articles.length === 0) {
-    wrap.innerHTML = `<div style="text-align:center;padding:32px 0;" class="muted">
-      <i class="ti ti-table-import" style="font-size:40px;display:block;margin-bottom:12px;"></i>
-      Noch keine Artikel geladen.<br>
-      <button class="btn btn-info" style="margin-top:12px;" onclick="loadSheet()">
-        <i class="ti ti-refresh"></i> Aus Google Sheets laden
+    wrap.innerHTML = `<div style="text-align:center;padding:32px 0;">
+      <i class="ti ti-alert-circle" style="font-size:40px;display:block;margin-bottom:12px;color:var(--err);"></i>
+      <div style="font-weight:500;margin-bottom:6px;">Artikel konnten nicht geladen werden</div>
+      <div class="muted" style="margin-bottom:16px;font-size:13px;">Bitte Webhook-URL in den Einstellungen prüfen<br>und BigQuery API im Apps Script aktivieren.</div>
+      <button class="btn btn-info" onclick="startApp(true)">
+        <i class="ti ti-refresh"></i> Erneut versuchen
       </button>
     </div>`;
     return;
