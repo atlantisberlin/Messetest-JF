@@ -314,9 +314,14 @@ async function syncNow() {
   updateSyncStatusUI();
 
   try {
-    const resp = await fetch(WEBHOOK_URL, {
+    // Apps Script Web-Apps senden bei doPost keine CORS-Header zurück,
+    // daher no-cors verwenden. Wir können die Antwort nicht lesen, aber
+    // ein erfolgreicher fetch() ohne Netzwerkfehler bedeutet der Request
+    // ist beim Server angekommen (Google empfängt und verarbeitet ihn serverseitig).
+    await fetch(WEBHOOK_URL, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      mode:    "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
       body:    JSON.stringify({
         action: "BATCH",
         messe:  messeLabel,
@@ -325,11 +330,8 @@ async function syncNow() {
       }),
     });
 
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    const json = await resp.json();
-    if (!json.ok) throw new Error(json.error || "Sync fehlgeschlagen");
-
-    // Erfolgreich gesendete Einträge aus der Queue entfernen
+    // Optimistisch: kein Netzwerkfehler = wahrscheinlich angekommen.
+    // Erfolgreich gesendete Einträge aus der Queue entfernen.
     const sentIds = new Set(pending.map(q => q.localId));
     syncQueue = syncQueue.filter(q => !sentIds.has(q.localId));
     persistSyncQueue();
@@ -340,6 +342,10 @@ async function syncNow() {
     console.warn("syncNow Fehler:", e);
     pending.forEach(q => q.sending = false);
     persistSyncQueue();
+    if (lastSyncError !== e.message) {
+      // Nur bei neuer/erster Fehlermeldung eine Notification zeigen (kein Spam bei Wiederholungen)
+      showNotification("Sync-Fehler: " + e.message, "err");
+    }
     lastSyncError = e.message;
     syncStatus = "error";
     // Erneuter Versuch nach kurzer Pause
