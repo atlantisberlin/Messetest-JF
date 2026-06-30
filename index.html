@@ -312,7 +312,7 @@ function hideLoading() {
 }
 
 // ── ARTIKEL-CACHE ──────────────────────────────────────────────────────────
-const CACHE_KEY     = "messetool_articles_v1";
+const CACHE_KEY     = "messetool_articles_v2"; // v2: nur Basisdaten, Details werden on-demand geladen
 const CACHE_MAX_AGE = 60 * 60 * 1000; // 1 Stunde in ms
 
 function getCachedArticles() {
@@ -366,7 +366,7 @@ async function loadArticles(forceReload = false) {
       }
     }
 
-    // BigQuery via Apps Script laden
+    // BigQuery via Apps Script laden (nur Basisdaten: SKU/EAN/Name/Kategorie/Lieferant/MasterID)
     if (!WEBHOOK_URL) {
       hideLoading();
       showNotification("Bitte zuerst die Webhook-URL in den Einstellungen hinterlegen.", "warn");
@@ -376,16 +376,15 @@ async function loadArticles(forceReload = false) {
     setLoadingStep("Verbinde mit BigQuery…", 15);
     await sleep(200);
 
-    setLoadingStep("Lade Artikeldaten aus BigQuery…\n(kann 15–30 Sekunden dauern)", 25);
+    setLoadingStep("Lade Artikel-Basisdaten…", 25);
 
-    // Ladeanimation während Wartezeit
     let fakeProgress = 25;
     const progressInterval = setInterval(() => {
       fakeProgress = Math.min(fakeProgress + 1, 75);
       qs("#loading-bar") && (qs("#loading-bar").style.width = fakeProgress + "%");
-    }, 500);
+    }, 300);
 
-    const resp = await fetch(WEBHOOK_URL + "?action=articles");
+    const resp = await fetch(WEBHOOK_URL + "?action=articles_basic");
     clearInterval(progressInterval);
 
     if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -396,10 +395,7 @@ async function loadArticles(forceReload = false) {
     setLoadingStep(`${rawArticles.length} Artikel empfangen – verarbeite…`, 80);
     await sleep(100);
 
-    // Cache speichern
     setCachedArticles(rawArticles);
-
-    // Lookups aufbauen
     buildArticleLookups(rawArticles);
     setLoadingStep(`${articles.length} Artikel bereit`, 95);
     await sleep(200);
@@ -418,7 +414,15 @@ function buildArticleLookups(rawArticles) {
   articles    = rawArticles;
   artBySku    = {};
   slavesBySku = {};
-  articles.forEach(a => { artBySku[a.sku] = a; });
+  articles.forEach(a => {
+    // Detail-Felder mit Defaults initialisieren, werden bei Bedarf nachgeladen
+    if (a.price === undefined) {
+      a.costPrice = 0; a.uvp = 0; a.price = 0; a.minPrice = 0;
+      a.image = ""; a.stocks = { zl:0, co:0, st:0, fb:0, hh:0 }; a.stock = 0;
+      a._detailLoaded = false;
+    }
+    artBySku[a.sku] = a;
+  });
   articles.forEach(a => {
     if (a.masterId) {
       if (!slavesBySku[a.masterId]) slavesBySku[a.masterId] = [];
@@ -427,6 +431,56 @@ function buildArticleLookups(rawArticles) {
   });
   qs("#art-count").textContent = articles.length;
   qs("#btn-reload").style.display = "flex";
+}
+
+// ── DETAILDATEN NACHLADEN (Preise, Lager, Bild) ───────────────────────────
+// Cache verhindert wiederholtes Nachladen bereits bekannter SKUs
+const detailLoadingInFlight = new Set(); // verhindert parallele Doppel-Requests
+
+async function ensureDetailsLoaded(skus, onUpdate) {
+  if (!WEBHOOK_URL || skus.length === 0) return;
+
+  // Nur SKUs die noch nicht geladen sind und nicht gerade laden
+  const missing = skus.filter(sku => {
+    const art = artBySku[sku];
+    return art && !art._detailLoaded && !detailLoadingInFlight.has(sku);
+  });
+  if (missing.length === 0) return;
+
+  missing.forEach(sku => detailLoadingInFlight.add(sku));
+
+  try {
+    // BigQuery IN-Klausel verträgt max. 200 SKUs pro Anfrage -> in Batches aufteilen
+    const batchSize = 150;
+    for (let i = 0; i < missing.length; i += batchSize) {
+      const batch = missing.slice(i, i + batchSize);
+      const url = WEBHOOK_URL + "?action=articles_detail&skus=" + encodeURIComponent(batch.join(","));
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const json = await resp.json();
+      if (!json.ok) continue;
+
+      const details = json.details || {};
+      Object.keys(details).forEach(sku => {
+        const art = artBySku[sku];
+        if (!art) return;
+        const d = details[sku];
+        art.costPrice  = d.costPrice;
+        art.uvp        = d.uvp;
+        art.price      = d.price;
+        art.minPrice   = d.minPrice;
+        art.image      = d.image;
+        art.stocks     = d.stocks;
+        art.stock      = d.stock;
+        art._detailLoaded = true;
+      });
+    }
+    if (onUpdate) onUpdate();
+  } catch(e) {
+    console.warn("ensureDetailsLoaded:", e);
+  } finally {
+    missing.forEach(sku => detailLoadingInFlight.delete(sku));
+  }
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -609,6 +663,10 @@ function renderMerklisteView() {
     <span style="font-weight:600;font-size:14px;">Merkliste</span>
     <span class="muted">${totalDone}/${totalPlanned} komm.</span>`;
   wrap.appendChild(hdr);
+
+  // Details für alle geplanten Artikel sicherstellen (Merkliste ist meist klein genug)
+  const plannedSkus = geplant.map(a => a.sku);
+  ensureDetailsLoaded(plannedSkus, () => renderMerklisteView());
 
   // Artikel nach Kategorie gruppieren
   // Master-Artikel als Gruppenträger; bei Slaves die Kategorie vom Slave selbst nehmen
@@ -899,6 +957,7 @@ function _renderDetailViewInner(wrap, art, onBack) {
   // Angeklickten Artikel hervorgehoben anzeigen
   const mainCard = document.createElement("div");
   mainCard.style.cssText = "background:var(--info-bg);border:1.5px solid var(--info);border-radius:var(--rl);padding:12px;margin-bottom:12px;";
+  mainCard.dataset.sku = art.sku;
   mainCard.innerHTML = `
     <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:10px;">
       ${imgTag(art, 72)}
@@ -909,16 +968,16 @@ function _renderDetailViewInner(wrap, art, onBack) {
         <div style="display:flex;gap:8px;margin-top:6px;">
           <div style="flex:1;background:var(--bg);border-radius:var(--r);padding:5px 8px;">
             <div style="font-size:10px;color:var(--text2);">VK</div>
-            <div style="font-size:15px;font-weight:500;">${fmtEur(art.price)}</div>
+            <div style="font-size:15px;font-weight:500;" class="detail-price-vk">${art._detailLoaded ? fmtEur(art.price) : "…"}</div>
           </div>
           <div style="flex:1;background:var(--bg);border-radius:var(--r);padding:5px 8px;">
             <div style="font-size:10px;color:var(--text2);">Min-VK</div>
-            <div style="font-size:15px;font-weight:500;">${fmtEur(art.minPrice)}</div>
+            <div style="font-size:15px;font-weight:500;" class="detail-price-min">${art._detailLoaded ? fmtEur(art.minPrice) : "…"}</div>
           </div>
         </div>
       </div>
     </div>
-    ${stockGrid(art.stocks, false)}
+    <div class="detail-stock">${art._detailLoaded ? stockGrid(art.stocks, false) : `<div class="muted" style="font-size:12px;opacity:.5;padding:6px 0;">Lagerbestand wird geladen…</div>`}</div>
     <div style="padding-top:10px;border-top:0.5px solid var(--border);">
       <div class="muted" style="font-size:12px;margin-bottom:6px;">Menge planen:</div>
       <div class="qty-control">
@@ -980,14 +1039,16 @@ function _renderDetailViewInner(wrap, art, onBack) {
 
     const card = document.createElement("div");
     card.className = "slave-card";
+    card.dataset.sku = sibling.sku;
+    const sLoaded = sibling._detailLoaded;
     card.innerHTML = `
       <div style="display:flex;gap:10px;align-items:flex-start;">
         ${imgTag(sibling, 48)}
         <div style="flex:1;min-width:0;">
           <div style="font-weight:500;font-size:13px;line-height:1.3;margin-bottom:2px;">${sibling.name}</div>
           <div class="muted">${sibling.sku}${sibling.ean ? " · " + sibling.ean : ""}</div>
-          <div class="muted">VK: ${fmtEur(sibling.price)} · Min: ${fmtEur(sibling.minPrice)}</div>
-          ${stockGrid(sibling.stocks, true)}
+          <div class="muted detail-price">${sLoaded ? `VK: ${fmtEur(sibling.price)} · Min: ${fmtEur(sibling.minPrice)}` : `<span style="opacity:.5;">Preis lädt…</span>`}</div>
+          <div class="detail-stock">${sLoaded ? stockGrid(sibling.stocks, true) : `<div class="muted" style="font-size:11px;opacity:.5;padding:4px 0;">Lagerbestand wird geladen…</div>`}</div>
           ${chips ? `<div class="chip-row">${chips}</div>` : ""}
         </div>
         <div class="qty-control" style="flex-shrink:0;align-self:center;">
@@ -1019,6 +1080,30 @@ function _renderDetailViewInner(wrap, art, onBack) {
     });
 
     slavesWrap.appendChild(card);
+  });
+
+  // Details für Hauptartikel + alle Geschwister nachladen
+  const allSkusInView = [art.sku, ...siblings.map(s => s.sku)];
+  ensureDetailsLoaded(allSkusInView, () => {
+    // Hauptkarte aktualisieren
+    if (art._detailLoaded) {
+      const vkEl  = mainCard.querySelector(".detail-price-vk");
+      const minEl = mainCard.querySelector(".detail-price-min");
+      const stEl  = mainCard.querySelector(".detail-stock");
+      if (vkEl)  vkEl.textContent  = fmtEur(art.price);
+      if (minEl) minEl.textContent = fmtEur(art.minPrice);
+      if (stEl)  stEl.innerHTML    = stockGrid(art.stocks, false);
+    }
+    // Geschwister-Karten aktualisieren
+    siblings.forEach(sibling => {
+      if (!sibling._detailLoaded) return;
+      const sCard = slavesWrap.querySelector(`.slave-card[data-sku="${sibling.sku}"]`);
+      if (!sCard) return;
+      const priceEl = sCard.querySelector(".detail-price");
+      const stockEl = sCard.querySelector(".detail-stock");
+      if (priceEl) priceEl.innerHTML = `VK: ${fmtEur(sibling.price)} · Min: ${fmtEur(sibling.minPrice)}`;
+      if (stockEl) stockEl.innerHTML = stockGrid(sibling.stocks, true);
+    });
   });
 }
 
@@ -1079,6 +1164,7 @@ function runPrepSearch() {
     const done  = commitDone[sku] || false;
     const offen = Math.max(0, qty - comm);
     const master = getMasterOf(art);
+    const loaded = art._detailLoaded;
 
     let chips = "";
     if (qty > 0) {
@@ -1089,6 +1175,7 @@ function runPrepSearch() {
 
     const card = document.createElement("div");
     card.className = "card";
+    card.dataset.sku = sku;
     card.style.cursor = "pointer";
     if (qty > 0) card.style.borderColor = done ? "var(--ok)" : "var(--info)";
 
@@ -1098,8 +1185,8 @@ function runPrepSearch() {
         <div style="flex:1;min-width:0;">
           <div style="font-weight:500;font-size:13px;line-height:1.3;margin-bottom:2px;">${art.name}</div>
           <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""} · ${art.category}</div>
-          <div class="muted">VK: ${fmtEur(art.price)}${master ? ` · <span style="color:var(--info);">Variante</span>` : ""}</div>
-          ${stockGrid(art.stocks, true)}
+          <div class="muted detail-price">${loaded ? "VK: " + fmtEur(art.price) : `<span style="opacity:.5;">VK: lädt…</span>`}${master ? ` · <span style="color:var(--info);">Variante</span>` : ""}</div>
+          <div class="detail-stock">${loaded ? stockGrid(art.stocks, true) : `<div class="muted" style="font-size:11px;opacity:.5;padding:4px 0;">Lagerbestand wird geladen…</div>`}</div>
           ${chips ? `<div class="chip-row">${chips}</div>` : ""}
         </div>
         <div class="qty-control" style="flex-shrink:0;align-self:center;" onclick="event.stopPropagation()">
@@ -1169,6 +1256,22 @@ function runPrepSearch() {
     pg.appendChild(nextBtn);
     paginationEl.appendChild(pg);
   }
+
+  // Detaildaten (Preis, Lager, Bild) für die sichtbaren Treffer nachladen
+  const visibleSkus = pageItems.map(a => a.sku);
+  ensureDetailsLoaded(visibleSkus, () => {
+    // Nur die betroffenen Karten aktualisieren, kein komplettes Re-Render
+    pageItems.forEach(art => {
+      if (!art._detailLoaded) return;
+      const card = resultsEl.querySelector(`.card[data-sku="${art.sku}"]`);
+      if (!card) return;
+      const priceEl = card.querySelector(".detail-price");
+      const stockEl = card.querySelector(".detail-stock");
+      const master  = getMasterOf(art);
+      if (priceEl) priceEl.innerHTML = `VK: ${fmtEur(art.price)}${master ? ` · <span style="color:var(--info);">Variante</span>` : ""}`;
+      if (stockEl) stockEl.innerHTML = stockGrid(art.stocks, true);
+    });
+  });
 }
 
 // ── DETAILANSICHT (Prep) ──────────────────────────────────────────────────
