@@ -119,6 +119,11 @@
       </button>
     </div>
   </div>
+  <div style="display:flex;justify-content:flex-end;padding:2px 16px 0;">
+    <span id="sync-status" style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--ok);">
+      <i class="ti ti-cloud-check" style="font-size:13px;"></i> Synchron
+    </span>
+  </div>
 
   <div id="settings-panel">
     <div style="font-size:13px;font-weight:500;margin-bottom:10px;">Einstellungen</div>
@@ -240,6 +245,166 @@ function loadUIState() {
 function saveState() { saveUIState(); }
 
 // ── STATE VOM SCRIPT LADEN ────────────────────────────────────────────────
+// ── SYNC-QUEUE (Offline-First) ────────────────────────────────────────────
+// Änderungen werden zuerst lokal gequeued, dann gebündelt synchronisiert.
+// Der angezeigte State ist immer: serverState + noch ausstehende Queue-Einträge.
+const SYNC_QUEUE_KEY     = "messetool_sync_queue";
+const SYNC_BATCH_MS      = 6000;   // alle 6s ausstehende Einträge senden
+const SYNC_DEBOUNCE_MS   = 2000;   // 2s nach letzter Änderung an einer SKU warten
+const AUTO_REFRESH_MS    = 30000;
+
+let syncQueue       = [];     // [{ localId, action, payload, debounceKey, createdAt }]
+let syncStatus       = "idle"; // idle | pending | syncing | error
+let syncTimer        = null;
+let debounceTimers    = {};    // { debounceKey: timeoutHandle }
+let lastSyncError     = null;
+
+function loadSyncQueue() {
+  try {
+    const raw = localStorage.getItem(SYNC_QUEUE_KEY);
+    syncQueue = raw ? JSON.parse(raw) : [];
+  } catch(e) { syncQueue = []; }
+}
+function persistSyncQueue() {
+  try { localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(syncQueue)); } catch(e){}
+}
+
+// Fügt eine Änderung zur Queue hinzu. debounceKey gruppiert schnelle Folgeänderungen
+// an derselben SKU/Aktion (z.B. mehrfaches Klicken auf +) zu einem Eintrag.
+function queueChange(action, payload, debounceKey) {
+  if (debounceKey) {
+    // Bestehenden Eintrag mit gleichem debounceKey ersetzen statt neuen anzulegen
+    const idx = syncQueue.findIndex(q => q.debounceKey === debounceKey && !q.sending);
+    if (idx >= 0) {
+      syncQueue[idx] = { ...syncQueue[idx], action, payload, createdAt: Date.now() };
+      persistSyncQueue();
+      updateSyncStatusUI();
+      scheduleDebouncedSync(debounceKey);
+      return;
+    }
+  }
+  syncQueue.push({
+    localId: genUUID(),
+    action, payload, debounceKey,
+    createdAt: Date.now(),
+  });
+  persistSyncQueue();
+  updateSyncStatusUI();
+  scheduleDebouncedSync(debounceKey);
+}
+
+// Wartet SYNC_DEBOUNCE_MS nach der letzten Änderung an diesem Key, dann synct
+function scheduleDebouncedSync(debounceKey) {
+  const key = debounceKey || "__immediate__";
+  if (debounceTimers[key]) clearTimeout(debounceTimers[key]);
+  debounceTimers[key] = setTimeout(() => {
+    delete debounceTimers[key];
+    syncNow();
+  }, debounceKey ? SYNC_DEBOUNCE_MS : 300);
+}
+
+// Sendet alle ausstehenden (nicht gerade sendenden) Queue-Einträge als Batch
+async function syncNow() {
+  if (!WEBHOOK_URL) return;
+  const pending = syncQueue.filter(q => !q.sending);
+  if (pending.length === 0) return;
+
+  pending.forEach(q => q.sending = true);
+  syncStatus = "syncing";
+  updateSyncStatusUI();
+
+  try {
+    const resp = await fetch(WEBHOOK_URL, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({
+        action: "BATCH",
+        messe:  messeLabel,
+        user:   currentUser,
+        items:  pending.map(q => ({ action: q.action, ...q.payload, uuid: q.localId })),
+      }),
+    });
+
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const json = await resp.json();
+    if (!json.ok) throw new Error(json.error || "Sync fehlgeschlagen");
+
+    // Erfolgreich gesendete Einträge aus der Queue entfernen
+    const sentIds = new Set(pending.map(q => q.localId));
+    syncQueue = syncQueue.filter(q => !sentIds.has(q.localId));
+    persistSyncQueue();
+    lastSyncError = null;
+    syncStatus = syncQueue.length > 0 ? "pending" : "idle";
+
+  } catch(e) {
+    console.warn("syncNow Fehler:", e);
+    pending.forEach(q => q.sending = false);
+    persistSyncQueue();
+    lastSyncError = e.message;
+    syncStatus = "error";
+    // Erneuter Versuch nach kurzer Pause
+    setTimeout(syncNow, 8000);
+  }
+  updateSyncStatusUI();
+}
+
+// Periodischer Sicherheitsnetz-Sync (falls Debounce-Timer durch Tab-Wechsel verloren ging)
+function startSyncLoop() {
+  stopSyncLoop();
+  syncTimer = setInterval(syncNow, SYNC_BATCH_MS);
+}
+function stopSyncLoop() {
+  if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+}
+
+// Wendet ausstehende Queue-Einträge auf einen frisch geladenen Server-State an,
+// damit lokale Änderungen nie durch einen Refresh überschrieben werden.
+function applyPendingQueueToState() {
+  syncQueue.forEach(q => {
+    const sku = q.payload.sku;
+    if (!sku) return;
+    switch (q.action) {
+      case "PLAN":
+        planned[sku] = q.payload.qty;
+        break;
+      case "PLAN_ADJUST":
+        planned[sku] = (planned[sku] || 0) + q.payload.diff;
+        if (planned[sku] <= 0) delete planned[sku];
+        break;
+      case "REMOVE":
+        delete planned[sku];
+        break;
+      case "COMMIT":
+        committed[sku] = (committed[sku] || 0) + q.payload.qty;
+        break;
+      case "COMMIT_UNDO":
+        committed[sku] = Math.max(0, (committed[sku] || 0) - q.payload.undoQty);
+        if (committed[sku] === 0) delete committed[sku];
+        break;
+    }
+  });
+}
+
+function updateSyncStatusUI() {
+  const el = qs("#sync-status");
+  if (!el) return;
+  const count = syncQueue.length;
+  if (syncStatus === "error") {
+    el.innerHTML = `<i class="ti ti-alert-triangle" style="font-size:13px;"></i> Sync-Fehler`;
+    el.style.color = "var(--err)";
+    el.title = lastSyncError || "";
+  } else if (count > 0 || syncStatus === "syncing") {
+    el.innerHTML = `<i class="ti ti-refresh" style="font-size:13px;${syncStatus==='syncing'?'animation:spin .8s linear infinite;':''}"></i> ${count > 0 ? count + " ausstehend" : "Synchronisiere…"}`;
+    el.style.color = "var(--warn)";
+    el.title = "";
+  } else {
+    el.innerHTML = `<i class="ti ti-cloud-check" style="font-size:13px;"></i> Synchron`;
+    el.style.color = "var(--ok)";
+    el.title = "";
+  }
+}
+
+// ── STATE VOM SERVER LADEN (mit Queue-Schutz) ─────────────────────────────
 async function loadRemoteState(silent = false) {
   if (!WEBHOOK_URL) return;
   if (!silent) showNotification("Lade aktuellen Stand…", "ok");
@@ -254,7 +419,11 @@ async function loadRemoteState(silent = false) {
     planned   = s.planned   || {};
     committed = s.committed || {};
     commitLog = s.commitLog || {};
-    // commitDone live berechnen
+
+    // Ausstehende lokale Änderungen erneut anwenden, damit sie nicht
+    // durch den frisch geladenen Server-Stand überschrieben werden
+    applyPendingQueueToState();
+
     commitDone = {};
     Object.keys(planned).forEach(sku => {
       if ((committed[sku] || 0) >= planned[sku]) commitDone[sku] = true;
@@ -271,7 +440,7 @@ async function loadRemoteState(silent = false) {
 // Auto-Refresh alle 30 Sekunden
 function startAutoRefresh() {
   stopAutoRefresh();
-  refreshTimer = setInterval(() => loadRemoteState(true), 30000);
+  refreshTimer = setInterval(() => loadRemoteState(true), AUTO_REFRESH_MS);
 }
 function stopAutoRefresh() {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
@@ -1573,65 +1742,49 @@ function renderSales() {
 }
 
 // ── WEBHOOK ───────────────────────────────────────────────────────────────
-async function sendWebhook(action, data) {
+// Reicht eine Änderung in die Sync-Queue ein (statt sofort zu senden)
+function sendWebhook(action, data) {
   if (!WEBHOOK_URL) return;
   const art = data.art || null;
+  const sku = data.sku || art?.sku || "";
   const payload = {
-    action,
-    messe:     messeLabel,
-    user:      currentUser,
-    uuid:      genUUID(),
-    sku:       data.sku  || art?.sku  || "",
-    ean:       data.ean  || art?.ean  || "",
-    artName:   data.artName || art?.name || "",
-    ref:       data.ref  || "",
+    sku,
+    ean:     data.ean  || art?.ean  || "",
+    artName: data.artName || art?.name || "",
+    ref:     data.ref  || "",
   };
 
   switch (action) {
-    case "PLAN":
-      payload.qty = data.qty || 0;
-      break;
-    case "PLAN_ADJUST":
-      payload.diff = data.diff || 0;
-      break;
-    case "COMMIT":
-      payload.qty = data.qty || 0;
-      break;
-    case "COMMIT_UNDO":
-      payload.undoQty = data.undoQty || 0;
-      break;
-    case "REMOVE":
-      payload.currentPlanned = data.currentPlanned || 0;
-      break;
+    case "PLAN":         payload.qty = data.qty || 0; break;
+    case "PLAN_ADJUST":  payload.diff = data.diff || 0; break;
+    case "COMMIT":       payload.qty = data.qty || 0; break;
+    case "COMMIT_UNDO":  payload.undoQty = data.undoQty || 0; break;
+    case "REMOVE":       payload.currentPlanned = data.currentPlanned || 0; break;
     case "SALE":
       payload.items    = data.items    || [];
       payload.listName = data.listName || "";
       break;
   }
 
-  try {
-    await fetch(WEBHOOK_URL, {
-      method:  "POST",
-      mode:    "no-cors",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(payload),
-    });
-  } catch(e) { console.warn("Webhook:", e); }
+  // Mengenänderungen am selben Artikel werden gebündelt (debounced),
+  // alles andere (COMMIT, SALE etc.) geht sofort in die Queue
+  const debounceKey = (action === "PLAN" || action === "PLAN_ADJUST" || action === "REMOVE")
+    ? "plan:" + sku
+    : null;
+
+  queueChange(action, payload, debounceKey);
 }
 
-// Planung senden: PLAN (erste Planung) oder PLAN_ADJUST (Änderung)
-async function sendPlanWebhook(sku, oldQty, newQty, art) {
+// Planung senden: PLAN (erste Planung), PLAN_ADJUST (Änderung) oder REMOVE
+function sendPlanWebhook(sku, oldQty, newQty, art) {
   if (!WEBHOOK_URL) return;
   if (oldQty === 0 && newQty > 0) {
-    // Erste Planung
-    await sendWebhook("PLAN", { sku, qty: newQty, art });
+    sendWebhook("PLAN", { sku, qty: newQty, art });
   } else if (newQty === 0) {
-    // Komplett entfernt
-    await sendWebhook("REMOVE", { sku, currentPlanned: oldQty, art });
+    sendWebhook("REMOVE", { sku, currentPlanned: oldQty, art });
   } else {
-    // Mengenänderung: Differenz schicken
     const diff = newQty - oldQty;
-    if (diff !== 0) await sendWebhook("PLAN_ADJUST", { sku, diff, art });
+    if (diff !== 0) sendWebhook("PLAN_ADJUST", { sku, diff, art });
   }
 }
 
@@ -1785,9 +1938,17 @@ async function startApp(forceReload = false) {
   ensureUser();
   renderView();
   startAutoRefresh();
+  startSyncLoop();
+  updateSyncStatusUI();
+
+  // Beim Verlassen der Seite einen letzten Sync-Versuch unternehmen
+  window.addEventListener("beforeunload", () => {
+    if (syncQueue.length > 0) syncNow();
+  });
 }
 
 loadUIState();
+loadSyncQueue();
 qs("#messe-label-display").textContent = messeLabel;
 document.querySelector(`.role-btn[data-role="${role}"]`)?.classList.add("btn-info");
 
