@@ -105,10 +105,26 @@
   <div class="loading-step" id="loading-step">Initialisiere…</div>
 </div>
 <div id="app">
+  <!-- Messe-Auswahl Dialog -->
+  <div id="messe-dialog" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:998;align-items:center;justify-content:center;padding:20px;">
+    <div style="background:var(--bg);border-radius:12px;padding:20px;width:100%;max-width:360px;max-height:80vh;overflow-y:auto;">
+      <div style="font-weight:600;font-size:16px;margin-bottom:4px;">Messe auswählen</div>
+      <div class="muted" style="font-size:13px;margin-bottom:16px;">Wähle eine bestehende Messe oder lege eine neue an.</div>
+      <div id="messe-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;"></div>
+      <div style="border-top:0.5px solid var(--border);padding-top:16px;">
+        <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Neue Messe anlegen</div>
+        <input type="text" id="inp-neue-messe" placeholder="z.B. Boot Düsseldorf 2027" style="margin-bottom:8px;" />
+        <button id="btn-neue-messe" class="btn btn-info" style="width:100%;">
+          <i class="ti ti-plus"></i> Messe anlegen
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px 0;">
     <div style="font-weight:600;font-size:17px;display:flex;align-items:center;gap:7px;">
       <i class="ti ti-anchor" style="color:var(--info);font-size:20px;"></i>
-      <span id="messe-label-display">Messe-Tool</span>
+      <span>Messe-Tool</span>
     </div>
     <div style="display:flex;align-items:center;gap:6px;">
       <div style="display:flex;gap:4px;">
@@ -123,7 +139,14 @@
       </button>
     </div>
   </div>
-  <div style="display:flex;justify-content:flex-end;padding:2px 16px 0;">
+
+  <!-- Aktuelle Messe prominent unter dem Header -->
+  <div style="padding:6px 16px 0;display:flex;align-items:center;justify-content:space-between;">
+    <button id="btn-switch-messe" style="background:var(--info);color:#fff;border:none;border-radius:20px;padding:4px 12px;font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;">
+      <i class="ti ti-calendar-event" style="font-size:13px;"></i>
+      <span id="messe-label-display">Keine Messe ausgewählt</span>
+      <i class="ti ti-chevron-down" style="font-size:11px;opacity:.7;"></i>
+    </button>
     <span id="sync-status" style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--ok);">
       <i class="ti ti-cloud-check" style="font-size:13px;"></i> Synchron
     </span>
@@ -131,8 +154,6 @@
 
   <div id="settings-panel">
     <div style="font-size:13px;font-weight:500;margin-bottom:10px;">Einstellungen</div>
-    <label class="muted" style="display:block;margin-bottom:2px;">Messe-Bezeichnung</label>
-    <input type="text" id="inp-messe-label" placeholder="z.B. Boot Düsseldorf 2026" style="margin-bottom:8px;" />
     <label class="muted" style="display:block;margin-bottom:2px;">Webhook-URL (Google Apps Script)</label>
     <input type="text" id="inp-webhook" placeholder="https://script.google.com/macros/s/..." style="margin-bottom:8px;" />
     <div style="display:flex;gap:8px;">
@@ -179,13 +200,13 @@ let articles    = [];   // alle Artikel aus Google Sheets (im Speicher)
 let artBySku    = {};   // { sku → article } – schneller Lookup
 let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut nach dem Laden
 
-let messeLabel  = "Messe-Tool";
+let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 let WEBHOOK_URL = "";
 let role        = "standard";
 let currentView = "prep";
-let currentUser = "";          // wird beim ersten Start gesetzt
+let currentUser = "";
 
-// Prep-Filter-State (bleibt über Re-Renders erhalten)
+// Prep-Filter-State
 let prepPage      = 0;
 let prepSearch    = "";
 let prepLieferant = "";
@@ -195,15 +216,70 @@ let prepDetailSku = null;
 
 const PAGE_SIZE = 50;
 
-// ⚡ State – wird aus dem Kommissionierungs-Sheet berechnet, nicht aus localStorage
-let planned    = {};   // { [sku]: qty }        – Summe PLAN + PLAN_ADJUST
-let committed  = {};   // { [sku]: qty }        – Summe COMMIT + COMMIT_UNDO
-let commitLog  = {};   // { [sku]: [{qty, ref, ts, user, uuid}] }
-let commitDone = {};   // { [sku]: bool }       – live berechnet
-let salesLists = [];   // Verkaufslisten (nur localStorage, nicht kritisch)
+let planned    = {};
+let committed  = {};
+let commitLog  = {};
+let commitDone = {};
+let salesLists = [];
 let activeSales= null;
 
-let refreshTimer = null;  // Auto-Refresh Handle
+let refreshTimer = null;
+
+// ── MESSE-DIALOG ──────────────────────────────────────────────────────────
+async function showMesseDialog() {
+  const dialog  = qs("#messe-dialog");
+  const listEl  = qs("#messe-list");
+  dialog.style.display = "flex";
+  listEl.innerHTML = `<div class="muted" style="text-align:center;padding:12px;">Lade Messen…</div>`;
+
+  try {
+    if (WEBHOOK_URL) {
+      const resp = await fetch(WEBHOOK_URL + "?action=messen");
+      const json = await resp.json();
+      const messen = json.messen || [];
+
+      if (messen.length === 0) {
+        listEl.innerHTML = `<div class="muted" style="text-align:center;font-size:13px;">Noch keine Messen vorhanden.</div>`;
+      } else {
+        listEl.innerHTML = "";
+        messen.forEach(m => {
+          const btn = document.createElement("button");
+          btn.className = "btn" + (m.name === messeLabel ? " btn-info" : "");
+          btn.style.cssText = "width:100%;text-align:left;justify-content:space-between;display:flex;align-items:center;";
+          const date = m.erstellt ? new Date(m.erstellt).toLocaleDateString("de-DE") : "";
+          btn.innerHTML = `<span style="font-weight:500;">${m.name}</span><span class="muted" style="font-size:11px;">${date}</span>`;
+          btn.onclick = () => selectMesse(m.name);
+          listEl.appendChild(btn);
+        });
+      }
+    } else {
+      listEl.innerHTML = `<div class="muted" style="font-size:13px;">Bitte zuerst Webhook-URL in den Einstellungen eintragen.</div>`;
+    }
+  } catch(e) {
+    listEl.innerHTML = `<div style="color:var(--err);font-size:13px;">Fehler: ${e.message}</div>`;
+  }
+}
+
+async function selectMesse(name) {
+  messeLabel = name;
+  qs("#messe-label-display").textContent = name;
+  qs("#messe-dialog").style.display = "none";
+  saveUIState();
+  planned = {}; committed = {}; commitLog = {}; commitDone = {};
+  showNotification(`Messe "${name}" ausgewählt`, "ok");
+  await loadRemoteState(false);
+  startAutoRefresh();
+  renderView();
+}
+
+qs("#btn-switch-messe").addEventListener("click", () => showMesseDialog());
+
+qs("#btn-neue-messe").addEventListener("click", async () => {
+  const name = qs("#inp-neue-messe").value.trim();
+  if (!name) { showNotification("Bitte einen Messe-Namen eingeben", "warn"); return; }
+  await selectMesse(name);
+  qs("#inp-neue-messe").value = "";
+});
 
 // ── UUID GENERATOR ────────────────────────────────────────────────────────
 function genUUID() {
@@ -226,12 +302,11 @@ function saveUIState() {
 function loadUIState() {
   try {
     const raw = localStorage.getItem("messetool_ui");
-    const old = localStorage.getItem("messetool_v2");
-    const src = raw ? JSON.parse(raw) : (old ? JSON.parse(old) : null);
+    const src = raw ? JSON.parse(raw) : null;
     if (!src) return;
     salesLists  = src.salesLists  || [];
     activeSales = src.activeSales || null;
-    messeLabel  = src.messeLabel  || "Messe-Tool";
+    messeLabel  = src.messeLabel  || "";
     WEBHOOK_URL = src.WEBHOOK_URL || "";
     role        = src.role        || "standard";
     currentUser = src.currentUser || "";
@@ -240,7 +315,6 @@ function loadUIState() {
   } catch(e){}
 }
 
-// Rückwärtskompatibilität: saveState ruft saveUIState auf
 function saveState() { saveUIState(); }
 
 // ── STATE VOM SCRIPT LADEN ────────────────────────────────────────────────
@@ -365,15 +439,13 @@ function stopSyncLoop() {
 // Wendet ausstehende Queue-Einträge auf einen frisch geladenen Server-State an,
 // damit lokale Änderungen nie durch einen Refresh überschrieben werden.
 function applyPendingQueueToState() {
-  // Queue enthält jetzt immer die letzte bekannte absolute Planmenge pro SKU
-  // Beim Debouncing wird der alte Eintrag durch den neuen ersetzt,
-  // daher ist der letzte PLAN-Eintrag pro SKU immer die aktuelle Zielgröße
   syncQueue.forEach(q => {
     const sku = q.payload.sku;
     if (!sku) return;
     switch (q.action) {
-      case "PLAN":
-        planned[sku] = q.payload.qty;
+      case "PLAN_SET":
+        if (q.payload.qty > 0) planned[sku] = q.payload.qty;
+        else delete planned[sku];
         break;
       case "REMOVE":
         delete planned[sku];
@@ -1761,10 +1833,10 @@ function sendWebhook(action, data) {
 function sendPlanWebhook(sku, oldQty, newQty, art) {
   if (!WEBHOOK_URL) return;
   if (newQty === 0) {
-    sendWebhook("REMOVE", { sku, currentPlanned: oldQty, art });
+    sendWebhook("REMOVE", { sku, art });
   } else {
-    // oldQty mitsenden damit Apps Script die Differenz korrekt berechnen kann
-    sendWebhook("PLAN", { sku, qty: newQty, oldQty, art });
+    // PLAN_SET: immer absolute Zielmenge, kein Summieren im Script
+    sendWebhook("PLAN_SET", { sku, qty: newQty, art });
   }
 }
 
@@ -1848,20 +1920,16 @@ qs("#btn-settings").addEventListener("click", () => {
   const panel = qs("#settings-panel");
   const open  = panel.style.display === "none";
   panel.style.display = open ? "block" : "none";
-  if (open) {
-    qs("#inp-messe-label").value = messeLabel;
-    qs("#inp-webhook").value     = WEBHOOK_URL;
-  }
+  if (open) qs("#inp-webhook").value = WEBHOOK_URL;
 });
 
 qs("#btn-save-settings").addEventListener("click", () => {
-  messeLabel  = qs("#inp-messe-label").value.trim() || "Messe-Tool";
   WEBHOOK_URL = qs("#inp-webhook").value.trim();
-  qs("#messe-label-display").textContent = messeLabel;
   saveUIState();
   qs("#settings-panel").style.display = "none";
   showNotification("Einstellungen gespeichert");
   if (articles.length === 0) startApp();
+  else if (WEBHOOK_URL && !messeLabel) showMesseDialog();
   else if (WEBHOOK_URL) { ensureUser(); loadRemoteState(); startAutoRefresh(); }
 });
 
@@ -1887,30 +1955,30 @@ async function startApp(forceReload = false) {
   setLoadingStep("Einstellungen laden…", 5);
   await sleep(100);
 
-  // Schritt 1: Artikel laden (Cache oder BigQuery)
   const ok = await loadArticles(forceReload);
   if (!ok) return;
 
-  // Schritt 2: Kommissionierungsstand laden
-  if (WEBHOOK_URL) {
+  if (WEBHOOK_URL && messeLabel) {
     setLoadingStep("Lade Kommissionierungsstand…", 88);
     await loadRemoteState(true);
   }
 
-  // Schritt 3: User sicherstellen
   setLoadingStep("Fast fertig…", 95);
   await sleep(100);
-
   hideLoading();
-  setLoadingStep("", 100);
 
   ensureUser();
   renderView();
-  startAutoRefresh();
   startSyncLoop();
   updateSyncStatusUI();
 
-  // Beim Verlassen der Seite einen letzten Sync-Versuch unternehmen
+  if (WEBHOOK_URL && !messeLabel) {
+    // Noch keine Messe ausgewählt → Dialog anzeigen
+    await showMesseDialog();
+  } else if (WEBHOOK_URL && messeLabel) {
+    startAutoRefresh();
+  }
+
   window.addEventListener("beforeunload", () => {
     if (syncQueue.length > 0) syncNow();
   });
@@ -1918,10 +1986,10 @@ async function startApp(forceReload = false) {
 
 loadUIState();
 loadSyncQueue();
-qs("#messe-label-display").textContent = messeLabel;
+clearArticleCache(); // alten Cache aufräumen
+qs("#messe-label-display").textContent = messeLabel || "Messe auswählen…";
 document.querySelector(`.role-btn[data-role="${role}"]`)?.classList.add("btn-info");
 
-// App starten wenn Webhook konfiguriert
 if (WEBHOOK_URL) {
   startApp();
 } else {
