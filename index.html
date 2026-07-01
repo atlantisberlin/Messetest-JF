@@ -370,16 +370,15 @@ function stopSyncLoop() {
 // Wendet ausstehende Queue-Einträge auf einen frisch geladenen Server-State an,
 // damit lokale Änderungen nie durch einen Refresh überschrieben werden.
 function applyPendingQueueToState() {
+  // Queue enthält jetzt immer die letzte bekannte absolute Planmenge pro SKU
+  // Beim Debouncing wird der alte Eintrag durch den neuen ersetzt,
+  // daher ist der letzte PLAN-Eintrag pro SKU immer die aktuelle Zielgröße
   syncQueue.forEach(q => {
     const sku = q.payload.sku;
     if (!sku) return;
     switch (q.action) {
       case "PLAN":
         planned[sku] = q.payload.qty;
-        break;
-      case "PLAN_ADJUST":
-        planned[sku] = (planned[sku] || 0) + q.payload.diff;
-        if (planned[sku] <= 0) delete planned[sku];
         break;
       case "REMOVE":
         delete planned[sku];
@@ -494,9 +493,11 @@ function hideLoading() {
 const CACHE_KEY     = "messetool_articles_v2"; // v2: nur Basisdaten, Details werden on-demand geladen
 const CACHE_MAX_AGE = 60 * 60 * 1000; // 1 Stunde in ms
 
+// Basisdaten sind zu groß für localStorage (QuotaExceededError bei 32K Artikeln)
+// SessionStorage hat dasselbe Limit aber wird pro Tab verwaltet und beim Schließen geleert
 function getCachedArticles() {
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = sessionStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const { ts, data } = JSON.parse(raw);
     if (Date.now() - ts > CACHE_MAX_AGE) return null;
@@ -506,17 +507,22 @@ function getCachedArticles() {
 
 function setCachedArticles(data) {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
-  } catch(e) { console.warn("Cache speichern fehlgeschlagen:", e); }
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+  } catch(e) {
+    // Auch sessionStorage könnte voll sein – in dem Fall ohne Cache weiterarbeiten
+    console.warn("Artikel-Cache konnte nicht gespeichert werden:", e.message);
+  }
 }
 
 function clearArticleCache() {
-  localStorage.removeItem(CACHE_KEY);
+  sessionStorage.removeItem(CACHE_KEY);
+  localStorage.removeItem(CACHE_KEY); // alten localStorage-Cache auch leeren
+  localStorage.removeItem("messetool_articles_v1");
 }
 
 function getCacheInfo() {
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = sessionStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const { ts, data } = JSON.parse(raw);
     const age  = Math.round((Date.now() - ts) / 60000);
@@ -1785,16 +1791,14 @@ function sendWebhook(action, data) {
   queueChange(action, payload, debounceKey);
 }
 
-// Planung senden: PLAN (erste Planung), PLAN_ADJUST (Änderung) oder REMOVE
+// Planung senden: immer absolute Menge als PLAN (einfacher und zuverlässiger als ADJUST)
 function sendPlanWebhook(sku, oldQty, newQty, art) {
   if (!WEBHOOK_URL) return;
-  if (oldQty === 0 && newQty > 0) {
-    sendWebhook("PLAN", { sku, qty: newQty, art });
-  } else if (newQty === 0) {
+  if (newQty === 0) {
     sendWebhook("REMOVE", { sku, currentPlanned: oldQty, art });
   } else {
-    const diff = newQty - oldQty;
-    if (diff !== 0) sendWebhook("PLAN_ADJUST", { sku, diff, art });
+    // Immer die absolute Menge senden, nie nur die Differenz
+    sendWebhook("PLAN", { sku, qty: newQty, art });
   }
 }
 
