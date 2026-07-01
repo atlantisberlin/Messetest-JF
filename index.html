@@ -395,12 +395,7 @@ async function syncNow() {
       method:  "POST",
       mode:    "no-cors",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body:    JSON.stringify({
-        action: "BATCH",
-        messe:  messeLabel,
-        user:   currentUser,
-        items:  pending.map(q => ({ action: q.action, ...q.payload, uuid: q.localId })),
-      }),
+      body:    (() => { const b = JSON.stringify({ action: "BATCH", messe: messeLabel, user: currentUser, items: pending.map(q => ({ action: q.action, ...q.payload, uuid: q.localId })) }); console.log("SYNC BODY:", b); return b; })(),
     });
 
     // Optimistisch: kein Netzwerkfehler = wahrscheinlich angekommen.
