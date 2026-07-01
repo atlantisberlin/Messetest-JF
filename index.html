@@ -135,11 +135,6 @@
     <input type="text" id="inp-messe-label" placeholder="z.B. Boot Düsseldorf 2026" style="margin-bottom:8px;" />
     <label class="muted" style="display:block;margin-bottom:2px;">Webhook-URL (Google Apps Script)</label>
     <input type="text" id="inp-webhook" placeholder="https://script.google.com/macros/s/..." style="margin-bottom:8px;" />
-    <label class="muted" style="display:block;margin-bottom:2px;">Artikel-Cache</label>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-      <span class="muted" id="cache-info">–</span>
-      <button id="btn-clear-cache" class="btn-sm btn-danger"><i class="ti ti-trash"></i> Cache leeren</button>
-    </div>
     <div style="display:flex;gap:8px;">
       <button id="btn-save-settings" class="btn btn-info" style="flex:1;">Speichern</button>
       <button id="btn-test-webhook" class="btn" style="flex:1;">Webhook testen</button>
@@ -490,46 +485,17 @@ function hideLoading() {
 }
 
 // ── ARTIKEL-CACHE ──────────────────────────────────────────────────────────
-const CACHE_KEY     = "messetool_articles_v2"; // v2: nur Basisdaten, Details werden on-demand geladen
-const CACHE_MAX_AGE = 60 * 60 * 1000; // 1 Stunde in ms
-
-// Basisdaten sind zu groß für localStorage (QuotaExceededError bei 32K Artikeln)
-// SessionStorage hat dasselbe Limit aber wird pro Tab verwaltet und beim Schließen geleert
-function getCachedArticles() {
-  try {
-    const raw = sessionStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const { ts, data } = JSON.parse(raw);
-    if (Date.now() - ts > CACHE_MAX_AGE) return null;
-    return data;
-  } catch(e) { return null; }
-}
-
-function setCachedArticles(data) {
-  try {
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
-  } catch(e) {
-    // Auch sessionStorage könnte voll sein – in dem Fall ohne Cache weiterarbeiten
-    console.warn("Artikel-Cache konnte nicht gespeichert werden:", e.message);
-  }
-}
-
+// Artikel-Cache: 32K Basisdaten zu groß für Browser-Storage (sessionStorage/localStorage beide ~5MB)
+// Daher kein persistenter Cache – Basisdaten werden bei jedem Start neu geladen (~5 Sekunden)
+function getCachedArticles() { return null; }
+function setCachedArticles(data) { /* kein Cache */ }
 function clearArticleCache() {
-  sessionStorage.removeItem(CACHE_KEY);
-  localStorage.removeItem(CACHE_KEY); // alten localStorage-Cache auch leeren
-  localStorage.removeItem("messetool_articles_v1");
+  // Alten Cache aus früheren Versionen aufräumen
+  try { localStorage.removeItem("messetool_articles_v2"); } catch(e){}
+  try { localStorage.removeItem("messetool_articles_v1"); } catch(e){}
+  try { sessionStorage.removeItem("messetool_articles_v2"); } catch(e){}
 }
-
-function getCacheInfo() {
-  try {
-    const raw = sessionStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const { ts, data } = JSON.parse(raw);
-    const age  = Math.round((Date.now() - ts) / 60000);
-    const left = Math.max(0, Math.round((CACHE_MAX_AGE - (Date.now() - ts)) / 60000));
-    return { ts, count: data.length, ageMins: age, leftMins: left };
-  } catch(e) { return null; }
-}
+function getCacheInfo() { return null; }
 
 // ── ARTIKEL LADEN (BigQuery via Apps Script) ──────────────────────────────
 async function loadArticles(forceReload = false) {
