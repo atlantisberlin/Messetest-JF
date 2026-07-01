@@ -1859,12 +1859,6 @@ qs("#btn-settings").addEventListener("click", () => {
   }
 });
 
-qs("#btn-clear-cache").addEventListener("click", () => {
-  clearArticleCache();
-  qs("#cache-info").textContent = "Cache geleert";
-  showNotification("Artikel-Cache geleert – beim nächsten Start wird BigQuery abgefragt", "warn");
-});
-
 qs("#btn-save-settings").addEventListener("click", () => {
   messeLabel  = qs("#inp-messe-label").value.trim() || "Messe-Tool";
   WEBHOOK_URL = qs("#inp-webhook").value.trim();
