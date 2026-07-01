@@ -205,7 +205,7 @@ let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut
 let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbw95b4lK55D4IikRx_DBvfWiioNauXgjzqf-aCymvkXdK8CVFpTnhegzDzqh1P63UyPWA/exec"; // Zentrale Webhook-URL
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbxl_ryBNBtc-UXfzMXXiPYfDfLcmqKdPUMfMspe-Yqp8OcKPIoFwKFYpZ7q82GPhOEqDA/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let role        = "standard";
 let currentView = "prep";
@@ -840,7 +840,7 @@ function renderPrep() {
 
   // Eindeutige Lieferanten & Kategorien für Autocomplete
   const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
-  const allKategorien  = [...new Set(articles.map(a => a.category).filter(Boolean))].sort();
+  const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
 
   wrap.innerHTML = `
     <div class="filter-bar">
@@ -925,10 +925,11 @@ function renderMerklisteView() {
   ensureDetailsLoaded(plannedSkus, () => renderMerklisteView());
 
   // Artikel nach Kategorie gruppieren
-  // Master-Artikel als Gruppenträger; bei Slaves die Kategorie vom Slave selbst nehmen
+  // Nur erste Kategorie verwenden (vor dem ersten |)
+  const firstCat = str => (str || "Sonstige").split(" | ")[0].trim() || "Sonstige";
   const byCategory = {};
   geplant.forEach(slave => {
-    const cat = slave.category || "Sonstige";
+    const cat = firstCat(slave.category);
     if (!byCategory[cat]) byCategory[cat] = new Set();
     byCategory[cat].add(slave);
   });
@@ -1210,7 +1211,7 @@ function _renderDetailViewInner(wrap, art, onBack) {
       <div style="flex:1;min-width:0;">
         <div style="font-weight:600;font-size:14px;line-height:1.3;margin-bottom:3px;">${art.name}</div>
         <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""}</div>
-        <div class="muted">${art.category} · ${art.supplier}</div>
+        <div class="muted">${(art.category||"").split(" | ")[0]} · ${art.supplier}</div>
         <div style="display:flex;gap:8px;margin-top:6px;">
           <div style="flex:1;background:var(--bg);border-radius:var(--r);padding:5px 8px;">
             <div style="font-size:10px;color:var(--text2);">VK</div>
@@ -1409,7 +1410,7 @@ function runPrepSearch() {
         ${imgTag(art, 52)}
         <div style="flex:1;min-width:0;">
           <div style="font-weight:500;font-size:13px;line-height:1.3;margin-bottom:2px;">${art.name}</div>
-          <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""} · ${art.category}</div>
+          <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""} · ${(art.category||"").split(" | ")[0]}</div>
           <div class="muted detail-price">${loaded ? "VK: " + fmtEur(art.price) : `<span style="opacity:.5;">VK: lädt…</span>`}${master ? ` · <span style="color:var(--info);">Variante</span>` : ""}</div>
           <div class="detail-stock">${loaded ? stockGrid(art.stocks, true) : `<div class="muted" style="font-size:11px;opacity:.5;padding:4px 0;">Lagerbestand wird geladen…</div>`}</div>
           ${chips ? `<div class="chip-row">${chips}</div>` : ""}
