@@ -1763,8 +1763,8 @@ function sendPlanWebhook(sku, oldQty, newQty, art) {
   if (newQty === 0) {
     sendWebhook("REMOVE", { sku, currentPlanned: oldQty, art });
   } else {
-    // Immer die absolute Menge senden, nie nur die Differenz
-    sendWebhook("PLAN", { sku, qty: newQty, art });
+    // oldQty mitsenden damit Apps Script die Differenz korrekt berechnen kann
+    sendWebhook("PLAN", { sku, qty: newQty, oldQty, art });
   }
 }
 
