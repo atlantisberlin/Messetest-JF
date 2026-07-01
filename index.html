@@ -1851,11 +1851,6 @@ qs("#btn-settings").addEventListener("click", () => {
   if (open) {
     qs("#inp-messe-label").value = messeLabel;
     qs("#inp-webhook").value     = WEBHOOK_URL;
-    // Cache-Info anzeigen
-    const info = getCacheInfo();
-    qs("#cache-info").textContent = info
-      ? `${info.count} Artikel · vor ${info.ageMins} Min. geladen · noch ${info.leftMins} Min. gültig`
-      : "Kein Cache vorhanden";
   }
 });
 
