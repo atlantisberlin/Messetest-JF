@@ -1809,6 +1809,7 @@ function sendWebhook(action, data) {
   };
 
   switch (action) {
+    case "PLAN_SET":     payload.qty = data.qty || 0; break;
     case "PLAN":         payload.qty = data.qty || 0; break;
     case "PLAN_ADJUST":  payload.diff = data.diff || 0; break;
     case "COMMIT":       payload.qty = data.qty || 0; break;
@@ -1822,7 +1823,7 @@ function sendWebhook(action, data) {
 
   // Mengenänderungen am selben Artikel werden gebündelt (debounced),
   // alles andere (COMMIT, SALE etc.) geht sofort in die Queue
-  const debounceKey = (action === "PLAN" || action === "PLAN_ADJUST" || action === "REMOVE")
+  const debounceKey = (action === "PLAN_SET" || action === "REMOVE")
     ? "plan:" + sku
     : null;
 
