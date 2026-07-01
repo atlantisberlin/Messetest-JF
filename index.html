@@ -71,8 +71,9 @@
     .divider{height:0.5px;background:var(--border);margin:12px 0;}
     .chip-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
     .qty-control{display:flex;align-items:center;gap:6px;}
-    .qty-btn{width:30px;height:30px;border-radius:50%;border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;flex-shrink:0;}
-    .qty-inp{width:52px;text-align:center;padding:5px 4px;}
+    .qty-btn{display:none;} /* +/- Buttons ausgeblendet - nur Direkteingabe */
+    .qty-inp{width:64px;text-align:center;padding:6px 8px;font-size:15px;font-weight:500;border-radius:var(--r);border:1.5px solid var(--border2);background:var(--bg);}
+    .qty-inp:focus{border-color:var(--info);outline:none;background:var(--bg2);}
     /* Spinner-Pfeile bei number-Input ausblenden */
     .qty-inp::-webkit-outer-spin-button,
     .qty-inp::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
@@ -288,6 +289,31 @@ function genUUID() {
     return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
   });
 }
+
+// Qty-Input Handler: speichert bei Enter oder Verlassen des Feldes
+function attachQtyHandler(inp, getSku, getArt, onSave) {
+  let lastVal = parseInt(inp.value) || 0;
+
+  const save = function() {
+    const s   = getSku();
+    const neu = Math.max(0, parseInt(this.value) || 0);
+    if (neu === lastVal) return; // keine Änderung
+    const old = lastVal;
+    lastVal   = neu;
+    if (neu === 0) delete planned[s]; else planned[s] = neu;
+    saveState();
+    sendPlanWebhook(s, old, neu, getArt ? getArt() : null);
+    if (onSave) onSave(neu);
+  };
+
+  inp.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") { e.preventDefault(); this.blur(); }
+    if (e.key === "Escape") { this.value = lastVal; this.blur(); }
+  });
+  inp.addEventListener("blur", save);
+}
+
+
 
 // ── PERSISTENZ (nur UI-State und Einstellungen) ───────────────────────────
 function saveUIState() {
@@ -1102,22 +1128,12 @@ function _renderSlaveRow(container, slave, isPlanned) {
       <button class="qty-btn" data-sku="${sku}" data-dir="-1" style="border-color:${borderCol};flex-shrink:0;">−</button>
       <input class="qty-inp" type="number" min="0" value="${qty}" data-sku="${sku}" style="flex:1;border-color:${borderCol};" />
       <button class="qty-btn" data-sku="${sku}" data-dir="1" style="border-color:${borderCol};flex-shrink:0;">+</button>`;
-    qtyWrap.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
-      const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
-      const old = planned[s] || 0;
-      const neu = Math.max(0, old + dir);
-      if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState(); renderMerklisteView();
-      sendPlanWebhook(s, old, neu, slave);
-    }));
-    qtyWrap.querySelector(".qty-inp").addEventListener("change", function() {
-      const s = this.dataset.sku;
-      const old = planned[s] || 0;
-      const neu = Math.max(0, parseInt(this.value) || 0);
-      if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState(); renderMerklisteView();
-      sendPlanWebhook(s, old, neu, slave);
-    });
+    attachQtyHandler(
+      qtyWrap.querySelector(".qty-inp"),
+      () => sku,
+      () => slave,
+      () => { saveState(); renderMerklisteView(); }
+    );
     bottomRow.appendChild(qtyWrap);
   }
 
@@ -1219,27 +1235,11 @@ function _renderDetailViewInner(wrap, art, onBack) {
   slavesWrap.id = "detail-slaves";
   wrap.appendChild(slavesWrap);
 
-  // Qty für angeklickten Artikel – jetzt sicher im DOM
-  const updateMainQty = (sku, neu) => {
-    const old = planned[sku] || 0;
-    if (neu === 0) delete planned[sku]; else planned[sku] = neu;
-    saveState();
-    sendPlanWebhook(sku, old, neu, art);
-  };
-  const dMinus = wrap.querySelector("#d-minus");
-  const dPlus  = wrap.querySelector("#d-plus");
-  const dQty   = wrap.querySelector("#d-qty");
-  if (dMinus) dMinus.onclick = () => {
-    const neu = Math.max(0, (planned[art.sku] || 0) - 1);
-    if (dQty) dQty.value = neu; updateMainQty(art.sku, neu);
-  };
-  if (dPlus) dPlus.onclick = () => {
-    const neu = (planned[art.sku] || 0) + 1;
-    if (dQty) dQty.value = neu; updateMainQty(art.sku, neu);
-  };
-  if (dQty) dQty.addEventListener("change", function() {
-    updateMainQty(art.sku, Math.max(0, parseInt(this.value) || 0));
-  });
+  // Qty für angeklickten Artikel: Direkteingabe mit Enter/Blur
+  const dQty = wrap.querySelector("#d-qty");
+  if (dQty) {
+    attachQtyHandler(dQty, () => art.sku, () => art, () => saveState());
+  }
 
   // Geschwister rendern
   siblings.forEach(sibling => {
@@ -1276,26 +1276,16 @@ function _renderDetailViewInner(wrap, art, onBack) {
         </div>
       </div>`;
 
-    card.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
-      const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
-      const old = planned[s] || 0;
-      const neu = Math.max(0, old + dir);
-      if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState();
-      const inp = card.querySelector(`.qty-inp[data-sku="${s}"]`);
-      if (inp) inp.value = neu;
-      const chipsEl = card.querySelector(".chip-row");
-      if (chipsEl) chipsEl.innerHTML = neu > 0 ? `<span class="badge info">Geplant: ${neu}</span>` : "";
-      sendPlanWebhook(s, old, neu, sibling);
-    }));
-    card.querySelector(".qty-inp").addEventListener("change", function() {
-      const s = this.dataset.sku;
-      const old = planned[s] || 0;
-      const neu = Math.max(0, parseInt(this.value) || 0);
-      if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState();
-      sendPlanWebhook(s, old, neu, sibling);
-    });
+    attachQtyHandler(
+      card.querySelector(".qty-inp"),
+      () => sibling.sku,
+      () => sibling,
+      (neu) => {
+        saveState();
+        const chipsEl = card.querySelector(".chip-row");
+        if (chipsEl) chipsEl.innerHTML = neu > 0 ? `<span class="badge info">Geplant: ${neu}</span>` : "";
+      }
+    );
 
     slavesWrap.appendChild(card);
   });
@@ -1420,27 +1410,16 @@ function runPrepSearch() {
       renderPrep();
     });
 
-    // Qty-Events (ohne komplettes Re-Render)
-    card.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
-      const s = b.dataset.sku, dir = parseInt(b.dataset.dir);
-      const old = planned[s] || 0;
-      const neu = Math.max(0, old + dir);
-      if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState();
-      const inp = card.querySelector(`.qty-inp[data-sku="${s}"]`);
-      if (inp) inp.value = neu;
-      card.style.borderColor = neu > 0 ? "var(--info)" : "";
-      sendPlanWebhook(s, old, neu, articles.find(a => a.sku === s));
-    }));
-    card.querySelector(".qty-inp").addEventListener("change", function() {
-      const s = this.dataset.sku;
-      const old = planned[s] || 0;
-      const neu = Math.max(0, parseInt(this.value) || 0);
-      if (neu === 0) delete planned[s]; else planned[s] = neu;
-      saveState();
-      card.style.borderColor = neu > 0 ? "var(--info)" : "";
-      sendPlanWebhook(s, old, neu, articles.find(a => a.sku === s));
-    });
+    // Qty-Events: nur Direkteingabe mit Enter/Blur
+    attachQtyHandler(
+      card.querySelector(".qty-inp"),
+      () => art.sku,
+      () => articles.find(a => a.sku === art.sku),
+      (neu) => {
+        saveState();
+        card.style.borderColor = neu > 0 ? "var(--info)" : "";
+      }
+    );
 
     resultsEl.appendChild(card);
   });
@@ -1731,15 +1710,19 @@ function renderSales() {
       wrap.appendChild(card);
     });
 
+    // Verkauf: +/- Buttons bleiben für schnelle Mengenanpassung
     wrap.querySelectorAll(".qty-btn").forEach(b => b.addEventListener("click", () => {
       const sku = b.dataset.sku, dir = parseInt(b.dataset.dir);
       const item = list.items.find(i => i.sku === sku);
       if (item) { item.qty = Math.max(1, (item.qty || 1) + dir); saveState(); renderSales(); }
     }));
-    wrap.querySelectorAll(".qty-inp").forEach(inp => inp.addEventListener("change", () => {
-      const item = list.items.find(i => i.sku === inp.dataset.sku);
-      if (item) { item.qty = Math.max(1, parseInt(inp.value) || 1); saveState(); }
-    }));
+    wrap.querySelectorAll(".qty-inp").forEach(inp => {
+      inp.style.display = ""; // Verkaufs-Inputs immer sichtbar (CSS würde sie sonst verstecken)
+      inp.addEventListener("change", () => {
+        const item = list.items.find(i => i.sku === inp.dataset.sku);
+        if (item) { item.qty = Math.max(1, parseInt(inp.value) || 1); saveState(); }
+      });
+    });
     wrap.querySelectorAll("[data-action=remove]").forEach(b => b.addEventListener("click", () => {
       list.items = list.items.filter(i => i.sku !== b.dataset.sku);
       saveState(); renderSales();
