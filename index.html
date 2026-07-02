@@ -138,6 +138,10 @@
       #detail-slaves{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;}
       #detail-slaves .slave-card{margin-bottom:0;margin-left:0;}
 
+      /* Merkliste: Master-Gruppen pro Kategorie als Grid statt gestapelter Liste */
+      .merkliste-group-wrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;align-items:start;margin-bottom:10px;}
+      .merkliste-group-wrap > div{margin-bottom:0 !important;}
+
       /* Tabs nicht über die volle Breite strecken, sondern kompakt am linken Rand */
       .tabs{justify-content:flex-start;}
       .tab{flex:0 0 auto;padding:10px 22px;font-size:12px;}
@@ -146,6 +150,7 @@
     @media(min-width:1200px){
       #prep-results{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));}
       #wh-items{grid-template-columns:repeat(auto-fill,minmax(360px,1fr));}
+      .merkliste-group-wrap{grid-template-columns:repeat(auto-fill,minmax(360px,1fr));}
     }
 
     /* Verkauf bleibt auf jeder Bildschirmgröße als schmale, telefon-taugliche
@@ -1024,6 +1029,11 @@ function renderMerklisteView() {
 
     if (catCollapsed) return;
 
+    // Container für alle Master-Gruppen dieser Kategorie (wird ab Tablet-Breite zum Grid)
+    const catGroupWrap = document.createElement("div");
+    catGroupWrap.className = "merkliste-group-wrap";
+    wrap.appendChild(catGroupWrap);
+
     // Slaves nach Master gruppieren
     const masterGroups = {}; // { masterSku|"__solo__sku": [slave, ...] }
     slaves.forEach(slave => {
@@ -1042,7 +1052,7 @@ function renderMerklisteView() {
 
     groupKeys.forEach(key => {
       const { master, slaves: groupSlaves } = masterGroups[key];
-      _renderMasterGroup(wrap, master, groupSlaves);
+      _renderMasterGroup(catGroupWrap, master, groupSlaves);
     });
   });
 }
