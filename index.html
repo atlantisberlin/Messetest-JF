@@ -158,6 +158,19 @@
     @media(min-width:720px){
       #view-sales{max-width:480px;margin:0 auto;}
     }
+
+    /* ── LOGIN-OVERLAY ─────────────────────────────────────────────────── */
+    #login-overlay{position:fixed;inset:0;background:var(--bg);z-index:1000;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:32px;}
+    #login-overlay.visible{display:flex;}
+    .login-pin-input{width:180px;text-align:center;font-size:26px;letter-spacing:10px;padding:12px 10px;border-radius:var(--r);border:1.5px solid var(--border2);background:var(--bg);color:var(--text);}
+    .login-pin-input:focus{outline:none;border-color:var(--info);}
+    #login-status{font-size:13px;min-height:18px;text-align:center;}
+    /* Settings: PIN-Verwaltung nur für Supervisor sichtbar (per JS ein-/ausgeblendet) */
+    #settings-pins{display:none;margin-top:14px;padding-top:14px;border-top:0.5px solid var(--border);}
+    #settings-pins .pin-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+    #settings-pins .pin-row label{flex:0 0 90px;font-size:12px;color:var(--text2);}
+    #settings-pins .pin-row input{flex:1;}
+    #settings-pins .pin-row .pin-status{flex:0 0 auto;font-size:11px;}
   </style>
 </head>
 <body>
@@ -167,6 +180,16 @@
   <div class="loading-spinner"></div>
   <div class="loading-bar-wrap"><div class="loading-bar" id="loading-bar" style="width:0%"></div></div>
   <div class="loading-step" id="loading-step">Initialisiere…</div>
+</div>
+<div id="login-overlay">
+  <i class="ti ti-lock" style="font-size:36px;color:var(--info);"></i>
+  <div class="loading-title">Anmelden</div>
+  <div class="muted" style="text-align:center;max-width:260px;">PIN eingeben, um auf das Messe-Tool zuzugreifen.</div>
+  <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" id="login-pin" class="login-pin-input" placeholder="••••" autocomplete="off" />
+  <button id="btn-login" class="btn btn-info" style="width:180px;justify-content:center;">
+    <i class="ti ti-login"></i> Anmelden
+  </button>
+  <div id="login-status"></div>
 </div>
 <div id="app">
   <!-- Messe-Auswahl Dialog -->
@@ -191,15 +214,15 @@
       <span>Messe-Tool</span>
     </div>
     <div style="display:flex;align-items:center;gap:6px;">
-      <div style="display:flex;gap:4px;">
-        <button class="role-btn btn-sm" data-role="standard"><i class="ti ti-user"></i> Verkäufer</button>
-        <button class="role-btn btn-sm" data-role="supervisor"><i class="ti ti-shield-check"></i> Supervisor</button>
-      </div>
+      <span id="role-badge-label" class="badge info" style="text-transform:capitalize;"></span>
       <button id="btn-reload" class="btn" style="font-size:12px;padding:3px 8px;display:none;align-items:center;gap:4px;">
         <i class="ti ti-refresh"></i> <span id="art-count">0</span>
       </button>
       <button id="btn-settings" class="btn" style="font-size:12px;padding:3px 8px;">
         <i class="ti ti-settings"></i>
+      </button>
+      <button id="btn-logout" class="btn-sm" title="Abmelden / Rolle wechseln">
+        <i class="ti ti-logout"></i>
       </button>
     </div>
   </div>
@@ -226,13 +249,42 @@
       <button id="btn-test-webhook" class="btn" style="flex:1;">Webhook testen</button>
     </div>
     <div id="webhook-status" style="margin-top:6px;font-size:12px;"></div>
+
+    <div id="settings-pins">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Benutzer-PINs</div>
+      <div class="muted" style="font-size:11px;margin-bottom:10px;">Nur Supervisor kann PINs ändern. Leeres Feld = unverändert lassen. 4-8 Ziffern.</div>
+      <div class="pin-row">
+        <label>Supervisor</label>
+        <input type="text" inputmode="numeric" id="pin-supervisor" placeholder="Aktuell gesetzt" />
+        <span class="pin-status" id="pin-status-supervisor"></span>
+      </div>
+      <div class="pin-row">
+        <label>Planer</label>
+        <input type="text" inputmode="numeric" id="pin-planer" placeholder="—" />
+        <span class="pin-status" id="pin-status-planer"></span>
+      </div>
+      <div class="pin-row">
+        <label>Kommission</label>
+        <input type="text" inputmode="numeric" id="pin-kommission" placeholder="—" />
+        <span class="pin-status" id="pin-status-kommission"></span>
+      </div>
+      <div class="pin-row">
+        <label>Verkauf</label>
+        <input type="text" inputmode="numeric" id="pin-verkauf" placeholder="—" />
+        <span class="pin-status" id="pin-status-verkauf"></span>
+      </div>
+      <button id="btn-save-pins" class="btn btn-info" style="width:100%;">
+        <i class="ti ti-device-floppy"></i> PINs speichern
+      </button>
+      <div id="pins-status" style="margin-top:6px;font-size:12px;"></div>
+    </div>
   </div>
 
   <div class="tabs" style="margin-top:10px;">
-    <button class="tab active" data-tab="prep"><i class="ti ti-clipboard-list"></i>Vorbereitung</button>
-    <button class="tab" data-tab="merkliste"><i class="ti ti-star"></i>Merkliste</button>
-    <button class="tab" data-tab="warehouse"><i class="ti ti-packages"></i>Kommission</button>
-    <button class="tab" data-tab="sales"><i class="ti ti-shopping-cart"></i>Verkauf</button>
+    <button class="tab active" data-tab="prep" data-roles="supervisor,planer"><i class="ti ti-clipboard-list"></i>Vorbereitung</button>
+    <button class="tab" data-tab="merkliste" data-roles="supervisor,planer"><i class="ti ti-star"></i>Merkliste</button>
+    <button class="tab" data-tab="warehouse" data-roles="supervisor,planer,kommission"><i class="ti ti-packages"></i>Kommission</button>
+    <button class="tab" data-tab="sales" data-roles="supervisor,planer,verkauf"><i class="ti ti-shopping-cart"></i>Verkauf</button>
   </div>
 
   <div id="notification-area"></div>
@@ -270,9 +322,40 @@ let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
 const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbzo1G2hMEunXFOCKCVh9cyMzQ7ynewC5L9koIwVsR89qaF4Ipc3z9wK2Welj7qnBLZf5w/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
-let role        = "standard";
 let currentView = "prep";
 let currentUser = "";
+
+// ── AUTH (Rollen & PIN-Login) ───────────────────────────────────────────
+// Token+Rolle liegen bewusst in sessionStorage (nicht localStorage):
+// überlebt einen normalen Reload innerhalb desselben Tabs/derselben
+// PWA-Instanz, verlangt aber bei echtem Neustart/neuem Tab erneutes Login.
+const TAB_PERMISSIONS = {
+  supervisor: ["prep", "merkliste", "warehouse", "sales"],
+  planer:     ["prep", "merkliste", "warehouse", "sales"],
+  kommission: ["warehouse"],
+  verkauf:    ["sales"],
+};
+
+function getDeviceId() {
+  let id = localStorage.getItem("messetool_device_id");
+  if (!id) { id = genUUID(); localStorage.setItem("messetool_device_id", id); }
+  return id;
+}
+function getAuthToken() { return sessionStorage.getItem("messetool_token") || ""; }
+function getAuthRole()  { return sessionStorage.getItem("messetool_role")  || ""; }
+function setAuth(token, role) {
+  sessionStorage.setItem("messetool_token", token);
+  sessionStorage.setItem("messetool_role", role);
+}
+function clearAuth() {
+  sessionStorage.removeItem("messetool_token");
+  sessionStorage.removeItem("messetool_role");
+}
+// Hängt das Auth-Token an eine GET-URL an (Backend verlangt es für jede
+// Aktion außer login/ping)
+function authUrl(url) {
+  return url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(getAuthToken());
+}
 
 // Prep-Filter-State
 let prepPage      = 0;
@@ -302,7 +385,7 @@ async function showMesseDialog() {
 
   try {
     if (WEBHOOK_URL) {
-      const resp = await fetch(WEBHOOK_URL + "?action=messen");
+      const resp = await fetch(authUrl(WEBHOOK_URL + "?action=messen"));
       const json = await resp.json();
       const messen = json.messen || [];
 
@@ -393,7 +476,7 @@ function attachQtyHandler(inp, getSku, getArt, onSave) {
 function saveUIState() {
   const s = {
     salesLists, activeSales,
-    messeLabel, WEBHOOK_URL, role, currentUser,
+    messeLabel, WEBHOOK_URL, currentUser,
     merklisteCollapsed, masterCollapsed
   };
   try { localStorage.setItem("messetool_ui", JSON.stringify(s)); } catch(e){}
@@ -409,7 +492,6 @@ function loadUIState() {
     messeLabel  = src.messeLabel  || "";
     // WEBHOOK_URL_DEFAULT hat immer Vorrang vor gespeichertem Wert
     WEBHOOK_URL = WEBHOOK_URL_DEFAULT || src.WEBHOOK_URL || "";
-    role        = src.role        || "standard";
     currentUser = src.currentUser || "";
     if (src.merklisteCollapsed) merklisteCollapsed = src.merklisteCollapsed;
     if (src.masterCollapsed)    masterCollapsed    = src.masterCollapsed;
@@ -496,7 +578,7 @@ async function syncNow() {
       method:  "POST",
       mode:    "no-cors",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body:    (() => { const b = JSON.stringify({ action: "BATCH", messe: messeLabel, user: currentUser, items: pending.map(q => ({ action: q.action, ...q.payload, uuid: q.localId })) }); console.log("SYNC BODY:", b); return b; })(),
+      body:    (() => { const b = JSON.stringify({ action: "BATCH", token: getAuthToken(), messe: messeLabel, user: currentUser, items: pending.map(q => ({ action: q.action, ...q.payload, uuid: q.localId })) }); console.log("SYNC BODY:", b); return b; })(),
     });
 
     // Optimistisch: kein Netzwerkfehler = wahrscheinlich angekommen.
@@ -581,11 +663,14 @@ async function loadRemoteState(silent = false) {
   if (!WEBHOOK_URL) return;
   if (!silent) showNotification("Lade aktuellen Stand…", "ok");
   try {
-    const url  = WEBHOOK_URL + "?action=load&messe=" + encodeURIComponent(messeLabel);
+    const url  = authUrl(WEBHOOK_URL + "?action=load&messe=" + encodeURIComponent(messeLabel));
     const resp = await fetch(url);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const json = await resp.json();
-    if (!json.ok) throw new Error(json.error || "Fehler");
+    if (!json.ok) {
+      if (json.code === 401) { clearAuth(); requireLogin(); return; }
+      throw new Error(json.error || "Fehler");
+    }
 
     const s = json.state || {};
     planned   = s.planned   || {};
@@ -634,6 +719,80 @@ function ensureUser() {
   const name = prompt("Wer bist du? (Name wird bei Buchungen eingetragen)") || "";
   currentUser = name.trim() || "Unbekannt";
   saveUIState();
+}
+
+// ── LOGIN / ROLLEN ─────────────────────────────────────────────────────────
+function requireLogin() {
+  hideLoading();
+  qs("#login-overlay").classList.add("visible");
+  qs("#login-pin").value = "";
+  qs("#login-status").textContent = "";
+  qs("#login-pin").focus();
+}
+function hideLoginScreen() {
+  qs("#login-overlay").classList.remove("visible");
+}
+
+async function attemptLogin() {
+  const pin      = qs("#login-pin").value.trim();
+  const statusEl = qs("#login-status");
+  if (!pin) return;
+  statusEl.style.color = "var(--text2)";
+  statusEl.textContent = "Prüfe…";
+  try {
+    const url  = WEBHOOK_URL + "?action=login&pin=" + encodeURIComponent(pin) + "&deviceId=" + encodeURIComponent(getDeviceId());
+    const resp = await fetch(url);
+    const json = await resp.json();
+    if (json.ok) {
+      setAuth(json.token, json.role);
+      hideLoginScreen();
+      applyRolePermissions(json.role);
+      startApp();
+    } else if (json.locked) {
+      const mins = Math.max(1, Math.ceil((json.retryAt - Date.now()) / 60000));
+      statusEl.style.color = "var(--err)";
+      statusEl.textContent = `Zu viele Fehlversuche. Erneut versuchen in ca. ${mins} Min.`;
+    } else {
+      statusEl.style.color = "var(--err)";
+      statusEl.textContent = (json.error || "Falscher PIN") +
+        (json.attemptsLeft != null ? ` (noch ${json.attemptsLeft} Versuche)` : "");
+    }
+  } catch(e) {
+    statusEl.style.color = "var(--err)";
+    statusEl.textContent = "Verbindungsfehler: " + e.message;
+  }
+}
+
+function logout() {
+  if (!confirm("Abmelden? Rolle kann danach neu gewählt werden.")) return;
+  stopAutoRefresh();
+  stopSyncLoop();
+  clearAuth();
+  location.hash = "";
+  // App-internen Zustand zurücksetzen, damit die nächste Rolle nicht
+  // versehentlich fremde Sicht-States (z.B. offene Detailansicht) erbt
+  prepDetailSku = null;
+  merklisteDetailSku = null;
+  requireLogin();
+}
+
+// Blendet Tabs, Settings-Zahnrad und Reload-Button je nach Rolle ein/aus.
+// WICHTIG: Das ist reine UI-Bequemlichkeit. Die eigentliche Durchsetzung
+// passiert serverseitig (Backend lehnt unerlaubte Schreibaktionen ab).
+function applyRolePermissions(role) {
+  const allowedTabs = TAB_PERMISSIONS[role] || [];
+  document.querySelectorAll(".tab").forEach(t => {
+    const roles = (t.dataset.roles || "").split(",");
+    t.style.display = roles.includes(role) ? "" : "none";
+  });
+  qs("#btn-settings").style.display = role === "supervisor" ? "" : "none";
+  qs("#role-badge-label").textContent = role;
+
+  // Falls der aktuell aktive Tab für diese Rolle nicht erlaubt ist,
+  // auf den ersten erlaubten Tab springen (z.B. Verkauf landet direkt in "sales")
+  if (!allowedTabs.includes(currentView)) {
+    currentView = allowedTabs[0] || "prep";
+  }
 }
 
 // ── LADE-OVERLAY ──────────────────────────────────────────────────────────
@@ -703,12 +862,15 @@ async function loadArticles(forceReload = false) {
       qs("#loading-bar") && (qs("#loading-bar").style.width = fakeProgress + "%");
     }, 300);
 
-    const resp = await fetch(WEBHOOK_URL + "?action=articles_basic");
+    const resp = await fetch(authUrl(WEBHOOK_URL + "?action=articles_basic"));
     clearInterval(progressInterval);
 
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const json = await resp.json();
-    if (!json.ok) throw new Error(json.error || "BigQuery-Fehler");
+    if (!json.ok) {
+      if (json.code === 401) { hideLoading(); clearAuth(); requireLogin(); return false; }
+      throw new Error(json.error || "BigQuery-Fehler");
+    }
 
     const rawArticles = json.articles || [];
     setLoadingStep(`${rawArticles.length} Artikel empfangen – verarbeite…`, 80);
@@ -773,7 +935,7 @@ async function ensureDetailsLoaded(skus, onUpdate) {
     const batchSize = 150;
     for (let i = 0; i < missing.length; i += batchSize) {
       const batch = missing.slice(i, i + batchSize);
-      const url = WEBHOOK_URL + "?action=articles_detail&skus=" + encodeURIComponent(batch.join(","));
+      const url = authUrl(WEBHOOK_URL + "?action=articles_detail&skus=" + encodeURIComponent(batch.join(",")));
       const resp = await fetch(url);
       if (!resp.ok) continue;
       const json = await resp.json();
@@ -1909,6 +2071,57 @@ function sendPlanWebhook(sku, oldQty, newQty, art) {
   }
 }
 
+// ── EINSTELLUNGEN: PIN-VERWALTUNG (nur Supervisor) ────────────────────────
+async function loadPinStatus() {
+  try {
+    const url  = authUrl(WEBHOOK_URL + "?action=settings_get_status");
+    const resp = await fetch(url);
+    const json = await resp.json();
+    if (!json.ok) return;
+    Object.keys(json.pinsSet || {}).forEach(r => {
+      const el = qs(`#pin-status-${r}`);
+      if (!el) return;
+      const set = json.pinsSet[r];
+      el.textContent = set ? "gesetzt" : "nicht gesetzt";
+      el.style.color = set ? "var(--ok)" : "var(--warn)";
+    });
+  } catch(e) { console.warn("loadPinStatus:", e); }
+}
+
+async function savePins() {
+  const statusEl = qs("#pins-status");
+  const pins = {};
+  ["supervisor","planer","kommission","verkauf"].forEach(r => {
+    const val = qs(`#pin-${r}`).value.trim();
+    if (val) pins[r] = val;
+  });
+  if (Object.keys(pins).length === 0) {
+    statusEl.style.color = "var(--warn)";
+    statusEl.textContent = "Kein PIN zum Speichern eingegeben.";
+    return;
+  }
+  statusEl.style.color = "var(--text2)";
+  statusEl.textContent = "Speichere…";
+  try {
+    const params = new URLSearchParams({ action: "settings_update_pins", token: getAuthToken() });
+    Object.keys(pins).forEach(r => params.set(r, pins[r]));
+    const resp = await fetch(WEBHOOK_URL + "?" + params.toString());
+    const json = await resp.json();
+    if (json.ok) {
+      statusEl.style.color = "var(--ok)";
+      statusEl.textContent = "PINs gespeichert.";
+      ["supervisor","planer","kommission","verkauf"].forEach(r => { const i = qs(`#pin-${r}`); if (i) i.value = ""; });
+      loadPinStatus();
+    } else {
+      statusEl.style.color = "var(--err)";
+      statusEl.textContent = json.error || "Fehler beim Speichern.";
+    }
+  } catch(e) {
+    statusEl.style.color = "var(--err)";
+    statusEl.textContent = "Verbindungsfehler: " + e.message;
+  }
+}
+
 function fmtEur(v) {
   return (v || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
 }
@@ -1973,11 +2186,10 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
   renderView();
 }));
 
-document.querySelectorAll(".role-btn").forEach(b => b.addEventListener("click", () => {
-  role = b.dataset.role;
-  document.querySelectorAll(".role-btn").forEach(x => x.classList.toggle("btn-info", x.dataset.role === role));
-  saveState();
-}));
+qs("#btn-login").addEventListener("click", attemptLogin);
+qs("#login-pin").addEventListener("keydown", e => { if (e.key === "Enter") attemptLogin(); });
+qs("#btn-logout").addEventListener("click", logout);
+qs("#btn-save-pins").addEventListener("click", savePins);
 
 qs("#btn-reload").addEventListener("click", () => {
   if (!confirm("Artikel neu aus BigQuery laden und Cache leeren?")) return;
@@ -1989,7 +2201,15 @@ qs("#btn-settings").addEventListener("click", () => {
   const panel = qs("#settings-panel");
   const open  = panel.style.display === "none";
   panel.style.display = open ? "block" : "none";
-  if (open) qs("#inp-webhook").value = WEBHOOK_URL_DEFAULT || WEBHOOK_URL;
+  if (open) {
+    qs("#inp-webhook").value = WEBHOOK_URL_DEFAULT || WEBHOOK_URL;
+    if (getAuthRole() === "supervisor") {
+      qs("#settings-pins").style.display = "block";
+      loadPinStatus();
+    } else {
+      qs("#settings-pins").style.display = "none";
+    }
+  }
 });
 
 qs("#btn-save-settings").addEventListener("click", () => {
@@ -2059,13 +2279,17 @@ if (WEBHOOK_URL_DEFAULT) WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 loadSyncQueue();
 clearArticleCache(); // alten Cache aufräumen
 qs("#messe-label-display").textContent = messeLabel || "Messe auswählen…";
-document.querySelector(`.role-btn[data-role="${role}"]`)?.classList.add("btn-info");
 
-if (WEBHOOK_URL) {
-  startApp();
-} else {
+// Login-Gate: ohne gültiges Token (pro Tab/PWA-Instanz, siehe AUTH-Kommentar
+// oben) wird nichts geladen - erst nach erfolgreichem Login startet startApp().
+if (!WEBHOOK_URL) {
   hideLoading();
   renderView();
+} else if (getAuthToken() && getAuthRole()) {
+  applyRolePermissions(getAuthRole());
+  startApp();
+} else {
+  requireLogin();
 }
 </script>
 </body>
