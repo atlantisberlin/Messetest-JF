@@ -951,9 +951,13 @@ async function ensureDetailsLoaded(skus, onUpdate) {
       const batch = missing.slice(i, i + batchSize);
       const url = authUrl(WEBHOOK_URL + "?action=articles_detail&skus=" + encodeURIComponent(batch.join(",")));
       const resp = await fetch(url);
-      if (!resp.ok) continue;
+      if (!resp.ok) { console.warn("[Details] HTTP-Fehler", resp.status, "für Batch", i); continue; }
       const json = await resp.json();
-      if (!json.ok) continue;
+      if (!json.ok) {
+        console.warn("[Details] Backend-Fehler:", json.error, "code:", json.code);
+        if (json.code === 401) { clearAuth(); requireLogin(); return; }
+        continue;
+      }
 
       const details = json.details || {};
       Object.keys(details).forEach(sku => {
@@ -1752,9 +1756,15 @@ function renderWarehouse() {
     b.style.fontSize = "13px";
     b.innerHTML = `<i class="ti ti-map-pin" style="font-size:13px;"></i> ${p.label}`;
     b.addEventListener("click", () => {
-      whPickort = p.key;
-      saveUIState();
-      renderWarehouse();
+      console.log("[Pickort] Klick registriert:", p.key);
+      try {
+        whPickort = p.key;
+        saveUIState();
+        renderWarehouse();
+      } catch(e) {
+        console.error("[Pickort] Fehler beim Rendern:", e);
+        showNotification("Fehler bei Lagerortauswahl: " + e.message, "err");
+      }
     });
     pickWrap.appendChild(b);
   });
