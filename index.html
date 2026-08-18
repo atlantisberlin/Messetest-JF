@@ -1770,13 +1770,26 @@ function renderWarehouse() {
   });
   wrap.appendChild(pickWrap);
 
-  // Alle offenen (noch nicht fertig kommissionierten) geplanten Artikel,
-  // unabhängig vom Lagerort. Details (u.a. lagerortbezogener Bestand)
-  // nachladen, falls noch nicht bekannt - wichtig für Geräte, die
-  // ausschließlich mit der Rolle "kommission" laufen und nie durch
-  // Vorbereitung/Merkliste kommen, wo das sonst schon passiert.
-  const candidates = articles.filter(a => (planned[a.sku] || 0) > 0 && !commitDone[a.sku]);
-  ensureDetailsLoaded(candidates.map(a => a.sku), () => renderWarehouse());
+  // Basis für die Statistik-Kachel: ALLE geplanten Artikel mit Bestand am
+  // gewählten Lagerort - AUCH bereits fertig kommissionierte. Wichtig: wenn
+  // man hier stattdessen von der Kartenliste (toCommit) ausgehen würde,
+  // verschwindet ein Artikel in dem Moment aus der Zählung, in dem er
+  // fertig wird - "Kommissioniert" würde dann strukturell nie über 0
+  // hinauskommen, weil fertige Artikel ja gerade deshalb aus der Karten-
+  // liste rausfallen sollen (Kommissionierung ist bereits abgeschlossen und
+  // muss dort keine Aktion mehr anbieten).
+  const plannedAnywhere = articles.some(a => (planned[a.sku] || 0) > 0 && !commitDone[a.sku]);
+  const locationAll = articles.filter(a =>
+    (planned[a.sku] || 0) > 0 && (a.stocks?.[whPickort] || 0) > 0
+  );
+  // Details (u.a. lagerortbezogener Bestand) nachladen, falls noch nicht
+  // bekannt - wichtig für Geräte, die ausschließlich mit der Rolle
+  // "kommission" laufen und nie durch Vorbereitung/Merkliste kommen, wo
+  // das sonst schon passiert.
+  ensureDetailsLoaded(
+    articles.filter(a => (planned[a.sku] || 0) > 0).map(a => a.sku),
+    () => renderWarehouse()
+  );
 
   if (!whPickort) {
     wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="text-align:center;padding:24px 0;">
@@ -1788,10 +1801,11 @@ function renderWarehouse() {
 
   const pickInfo = PICKORTE.find(p => p.key === whPickort);
 
-  // Nur Artikel, die am gewählten Lagerort tatsächlich Bestand haben
-  const toCommit = candidates.filter(a => (a.stocks?.[whPickort] || 0) > 0);
+  // Kartenliste: nur die am gewählten Lagerort noch offenen Artikel -
+  // fertige verschwinden hier bewusst, brauchen keine Aktion mehr.
+  const toCommit = locationAll.filter(a => !commitDone[a.sku]);
 
-  if (candidates.length === 0) {
+  if (!plannedAnywhere && locationAll.length === 0) {
     wrap.insertAdjacentHTML("beforeend", `<div style="text-align:center;padding:32px 0;" class="muted">
       <i class="ti ti-clipboard-list" style="font-size:40px;display:block;margin-bottom:12px;"></i>
       Noch keine Artikel in der Vorbereitung ausgewählt.
@@ -1807,8 +1821,8 @@ function renderWarehouse() {
     return;
   }
 
-  const totalPlanned   = toCommit.reduce((s, a) => s + (planned[a.sku] || 0), 0);
-  const totalCommitted = toCommit.reduce((s, a) => s + (committed[a.sku] || 0), 0);
+  const totalPlanned   = locationAll.reduce((s, a) => s + (planned[a.sku] || 0), 0);
+  const totalCommitted = locationAll.reduce((s, a) => s + (committed[a.sku] || 0), 0);
   const totalOpen      = Math.max(0, totalPlanned - totalCommitted);
   wrap.insertAdjacentHTML("beforeend", `
     <div class="card" style="background:var(--bg2);margin-bottom:16px;">
