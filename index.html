@@ -1756,6 +1756,7 @@ function renderWarehouse() {
     b.style.fontSize = "13px";
     b.innerHTML = `<i class="ti ti-map-pin" style="font-size:13px;"></i> ${p.label}`;
     b.addEventListener("click", () => {
+      alert("DIAGNOSE: Klick auf " + p.label + " (" + p.key + ") registriert.");
       console.log("[Pickort] Klick registriert:", p.key);
       try {
         whPickort = p.key;
@@ -1763,6 +1764,7 @@ function renderWarehouse() {
         renderWarehouse();
       } catch(e) {
         console.error("[Pickort] Fehler beim Rendern:", e);
+        alert("DIAGNOSE FEHLER: " + e.message);
         showNotification("Fehler bei Lagerortauswahl: " + e.message, "err");
       }
     });
