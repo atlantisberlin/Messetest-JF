@@ -320,7 +320,7 @@ let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut
 let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbw2wk3MLy2G_kClHwYL9118jdXRwTooQ9ubiHN39gwP4jXZW98s6NrqWuo4eaBUnZHwdg/exec"; // Zentrale Webhook-URL
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbzo1G2hMEunXFOCKCVh9cyMzQ7ynewC5L9koIwVsR89qaF4Ipc3z9wK2Welj7qnBLZf5w/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
@@ -373,6 +373,19 @@ let commitLog  = {};
 let commitDone = {};
 let salesLists = [];
 let activeSales= null;
+
+// Kommissionierung: Lagerort, an dem gerade gepickt wird. Bestimmt sowohl
+// welche Artikel angezeigt werden (nur mit Bestand > 0 an diesem Ort) als
+// auch den Vorschlagswert für Menge (verfügbarer Bestand dort) und den
+// Box-Nummer-Präfix.
+const PICKORTE = [
+  { key: "zl", label: "Zentrallager", prefix: "ZL-" },
+  { key: "co", label: "Coppi",        prefix: "CO-" },
+  { key: "st", label: "Steglitz",     prefix: "ST-" },
+  { key: "fb", label: "Freiburg",     prefix: "FB-" },
+  { key: "hh", label: "Hamburg",      prefix: "HH-" },
+];
+let whPickort = ""; // "" = noch nicht gewählt
 
 let refreshTimer = null;
 
@@ -476,7 +489,7 @@ function attachQtyHandler(inp, getSku, getArt, onSave) {
 function saveUIState() {
   const s = {
     salesLists, activeSales,
-    messeLabel, WEBHOOK_URL, currentUser,
+    messeLabel, WEBHOOK_URL, currentUser, whPickort,
     merklisteCollapsed, masterCollapsed
   };
   try { localStorage.setItem("messetool_ui", JSON.stringify(s)); } catch(e){}
@@ -493,6 +506,7 @@ function loadUIState() {
     // WEBHOOK_URL_DEFAULT hat immer Vorrang vor gespeichertem Wert
     WEBHOOK_URL = WEBHOOK_URL_DEFAULT || src.WEBHOOK_URL || "";
     currentUser = src.currentUser || "";
+    whPickort   = src.whPickort   || "";
     if (src.merklisteCollapsed) merklisteCollapsed = src.merklisteCollapsed;
     if (src.masterCollapsed)    masterCollapsed    = src.masterCollapsed;
   } catch(e){}
@@ -1729,12 +1743,56 @@ function renderWarehouse() {
   const wrap = qs("#view-warehouse");
   wrap.innerHTML = `<p class="muted" style="margin-bottom:12px;">Artikel entnehmen & bestätigen. Artikel können auch wieder aus der Liste entfernt werden.</p>`;
 
-  const toCommit = articles.filter(a => (planned[a.sku] || 0) > 0 && !commitDone[a.sku]);
+  // Pickort-Auswahl (immer sichtbar, damit man den Ort jederzeit wechseln kann)
+  const pickWrap = document.createElement("div");
+  pickWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;";
+  PICKORTE.forEach(p => {
+    const b = document.createElement("button");
+    b.className = "btn" + (whPickort === p.key ? " btn-info" : "");
+    b.style.fontSize = "13px";
+    b.innerHTML = `<i class="ti ti-map-pin" style="font-size:13px;"></i> ${p.label}`;
+    b.addEventListener("click", () => {
+      whPickort = p.key;
+      saveUIState();
+      renderWarehouse();
+    });
+    pickWrap.appendChild(b);
+  });
+  wrap.appendChild(pickWrap);
 
-  if (toCommit.length === 0) {
+  // Alle offenen (noch nicht fertig kommissionierten) geplanten Artikel,
+  // unabhängig vom Lagerort. Details (u.a. lagerortbezogener Bestand)
+  // nachladen, falls noch nicht bekannt - wichtig für Geräte, die
+  // ausschließlich mit der Rolle "kommission" laufen und nie durch
+  // Vorbereitung/Merkliste kommen, wo das sonst schon passiert.
+  const candidates = articles.filter(a => (planned[a.sku] || 0) > 0 && !commitDone[a.sku]);
+  ensureDetailsLoaded(candidates.map(a => a.sku), () => renderWarehouse());
+
+  if (!whPickort) {
+    wrap.innerHTML += `<div class="muted" style="text-align:center;padding:24px 0;">
+      <i class="ti ti-map-pin-off" style="font-size:32px;display:block;margin-bottom:8px;opacity:.5;"></i>
+      Bitte zuerst einen Lagerort zum Picken auswählen.
+    </div>`;
+    return;
+  }
+
+  const pickInfo = PICKORTE.find(p => p.key === whPickort);
+
+  // Nur Artikel, die am gewählten Lagerort tatsächlich Bestand haben
+  const toCommit = candidates.filter(a => (a.stocks?.[whPickort] || 0) > 0);
+
+  if (candidates.length === 0) {
     wrap.innerHTML += `<div style="text-align:center;padding:32px 0;" class="muted">
       <i class="ti ti-clipboard-list" style="font-size:40px;display:block;margin-bottom:12px;"></i>
       Noch keine Artikel in der Vorbereitung ausgewählt.
+    </div>`;
+    return;
+  }
+  if (toCommit.length === 0) {
+    wrap.innerHTML += `<div style="text-align:center;padding:32px 0;" class="muted">
+      <i class="ti ti-packages" style="font-size:40px;display:block;margin-bottom:12px;opacity:.5;"></i>
+      Keine offenen Artikel mit Bestand in <strong>${pickInfo.label}</strong>.<br>
+      <span style="font-size:12px;">Anderen Lagerort wählen oder Lagerdaten werden noch geladen.</span>
     </div>`;
     return;
   }
@@ -1744,6 +1802,7 @@ function renderWarehouse() {
   const totalOpen      = Math.max(0, totalPlanned - totalCommitted);
   wrap.innerHTML += `
     <div class="card" style="background:var(--bg2);margin-bottom:16px;">
+      <div class="muted" style="text-align:center;margin-bottom:6px;font-size:12px;">Zahlen beziehen sich auf <strong>${pickInfo.label}</strong></div>
       <div style="display:flex;gap:16px;justify-content:space-around;text-align:center;">
         <div><div style="font-size:20px;font-weight:600;">${totalPlanned}</div><div class="muted">Geplant</div></div>
         <div><div style="font-size:20px;font-weight:600;color:var(--ok);">${totalCommitted}</div><div class="muted">Kommissioniert</div></div>
@@ -1762,7 +1821,8 @@ function renderWarehouse() {
     const done  = commitDone[sku] || false;
     const offen = Math.max(0, qty - comm);
     const log   = commitLog[sku] || [];
-    const maxEntnahme = Math.min(offen, art.stock);
+    const stockHere   = art.stocks?.[whPickort] || 0;
+    const maxEntnahme = Math.min(offen, stockHere);
     const master = getMasterOf(art);
 
     const card = document.createElement("div");
@@ -1787,18 +1847,18 @@ function renderWarehouse() {
             <span class="badge info">Geplant: ${qty}</span>
             <span class="badge ok">Komm.: ${comm}</span>
             ${offen > 0 ? `<span class="badge warn">Offen: ${offen}</span>` : `<span class="badge ok"><i class="ti ti-check" style="font-size:10px;"></i> Erledigt</span>`}
-            ${art.stock < offen ? `<span class="badge err">Lager: ${art.stock}</span>` : ""}
+            ${stockHere < offen ? `<span class="badge err">${pickInfo.label}: ${stockHere}</span>` : ""}
           </div>
           ${logHTML}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
           ${!done ? `
             <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
-              <input class="qty-inp inp-wh-qty" type="number" min="1" max="${Math.max(1,art.stock)}"
+              <input class="qty-inp inp-wh-qty" type="number" min="1" max="${Math.max(1,stockHere)}"
                 value="${maxEntnahme > 0 ? maxEntnahme : 1}" data-sku="${sku}" style="width:60px;" />
-              <input class="btn" type="text" placeholder="Box / Kommentar"
+              <input class="btn" type="text" placeholder="Box-Nr."
                 id="ref-${sku}" style="width:120px;font-size:12px;padding:6px 8px;"
-                value="${localStorage.getItem('lastRef') || ''}" />
+                value="${pickInfo.prefix}" />
             </div>
             <button class="btn btn-ok btn-commit" data-sku="${sku}" style="width:100%;">
               <i class="ti ti-check"></i> Bestätigen
@@ -1822,7 +1882,6 @@ function renderWarehouse() {
     const refInp = qs(`#ref-${sku}`);
     const entnahme = Math.max(1, parseInt(inp?.value) || 1);
     const ref  = refInp?.value.trim() || "";
-    if (ref) localStorage.setItem("lastRef", ref);
     committed[sku] = (committed[sku] || 0) + entnahme;
     if (!commitLog[sku]) commitLog[sku] = [];
     commitLog[sku].push({ qty: entnahme, ref, ts: new Date().toLocaleString("de-DE"), user: currentUser });
