@@ -387,6 +387,14 @@ const PICKORTE = [
 ];
 let whPickort = ""; // "" = noch nicht gewählt
 
+// Kommission: Kategorie-/Lieferanten-Filter (analog zur Vorbereitung) und
+// Umschalter zwischen "Picken" (offene Kartenliste) und "Historie"
+// (bereits kommissionierte Buchungen, editierbar/löschbar).
+let whKategorie  = "";
+let whLieferant  = "";
+let whView       = "pick"; // "pick" | "history"
+let whHistorySearch = "";
+
 let refreshTimer = null;
 
 // ── MESSE-DIALOG ──────────────────────────────────────────────────────────
@@ -489,7 +497,7 @@ function attachQtyHandler(inp, getSku, getArt, onSave) {
 function saveUIState() {
   const s = {
     salesLists, activeSales,
-    messeLabel, WEBHOOK_URL, currentUser, whPickort,
+    messeLabel, WEBHOOK_URL, currentUser, whPickort, whKategorie, whLieferant,
     merklisteCollapsed, masterCollapsed
   };
   try { localStorage.setItem("messetool_ui", JSON.stringify(s)); } catch(e){}
@@ -507,6 +515,8 @@ function loadUIState() {
     WEBHOOK_URL = WEBHOOK_URL_DEFAULT || src.WEBHOOK_URL || "";
     currentUser = src.currentUser || "";
     whPickort   = src.whPickort   || "";
+    whKategorie = src.whKategorie || "";
+    whLieferant = src.whLieferant || "";
     if (src.merklisteCollapsed) merklisteCollapsed = src.merklisteCollapsed;
     if (src.masterCollapsed)    masterCollapsed    = src.masterCollapsed;
   } catch(e){}
@@ -541,7 +551,7 @@ function persistSyncQueue() {
 
 // Fügt eine Änderung zur Queue hinzu. debounceKey gruppiert schnelle Folgeänderungen
 // an derselben SKU/Aktion (z.B. mehrfaches Klicken auf +) zu einem Eintrag.
-function queueChange(action, payload, debounceKey) {
+function queueChange(action, payload, debounceKey, explicitUuid) {
   if (debounceKey) {
     // Bestehenden Eintrag mit gleichem debounceKey ersetzen statt neuen anzulegen
     const idx = syncQueue.findIndex(q => q.debounceKey === debounceKey && !q.sending);
@@ -554,7 +564,7 @@ function queueChange(action, payload, debounceKey) {
     }
   }
   syncQueue.push({
-    localId: genUUID(),
+    localId: explicitUuid || genUUID(),
     action, payload, debounceKey,
     createdAt: Date.now(),
   });
@@ -1749,14 +1759,13 @@ function renderWarehouse() {
 
   // Pickort-Auswahl (immer sichtbar, damit man den Ort jederzeit wechseln kann)
   const pickWrap = document.createElement("div");
-  pickWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;";
+  pickWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;";
   PICKORTE.forEach(p => {
     const b = document.createElement("button");
     b.className = "btn" + (whPickort === p.key ? " btn-info" : "");
     b.style.fontSize = "13px";
     b.innerHTML = `<i class="ti ti-map-pin" style="font-size:13px;"></i> ${p.label}`;
     b.addEventListener("click", () => {
-      console.log("[Pickort] Klick registriert:", p.key);
       try {
         whPickort = p.key;
         saveUIState();
@@ -1769,6 +1778,21 @@ function renderWarehouse() {
     pickWrap.appendChild(b);
   });
   wrap.appendChild(pickWrap);
+
+  // Umschalter: offene Pickliste vs. bereits erledigte Buchungen (editierbar)
+  const viewToggle = document.createElement("div");
+  viewToggle.style.cssText = "display:flex;gap:6px;margin-bottom:16px;";
+  viewToggle.innerHTML = `
+    <button class="btn-sm ${whView === "pick" ? "btn-info" : ""}" id="wh-view-pick"><i class="ti ti-list-check"></i> Picken</button>
+    <button class="btn-sm ${whView === "history" ? "btn-info" : ""}" id="wh-view-history"><i class="ti ti-history"></i> Historie</button>`;
+  wrap.appendChild(viewToggle);
+  qs("#wh-view-pick").addEventListener("click", () => { whView = "pick"; renderWarehouse(); });
+  qs("#wh-view-history").addEventListener("click", () => { whView = "history"; renderWarehouse(); });
+
+  if (whView === "history") {
+    renderWarehouseHistoryBody(wrap);
+    return;
+  }
 
   // Basis für die Statistik-Kachel: ALLE geplanten Artikel mit Bestand am
   // gewählten Lagerort - AUCH bereits fertig kommissionierte. Wichtig: wenn
@@ -1801,9 +1825,45 @@ function renderWarehouse() {
 
   const pickInfo = PICKORTE.find(p => p.key === whPickort);
 
+  // Kategorie-/Lieferanten-Filter (z.B. "nur Tauchmasken" oder "nur Mares"),
+  // wirkt auf Statistik UND Kartenliste gleichermaßen.
+  const filterWrap = document.createElement("div");
+  filterWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;";
+  filterWrap.innerHTML = `
+    <div class="ac-wrap" style="flex:1;min-width:160px;margin-bottom:0;">
+      <input type="text" id="wh-kategorie" placeholder="Kategorie … (z.B. Tauchmasken)" value="${whKategorie}" />
+      <div class="ac-dropdown" id="wh-ac-kategorie" style="display:none;"></div>
+    </div>
+    <div class="ac-wrap" style="flex:1;min-width:160px;margin-bottom:0;">
+      <input type="text" id="wh-lieferant" placeholder="Lieferant / Marke … (z.B. Mares)" value="${whLieferant}" />
+      <div class="ac-dropdown" id="wh-ac-lieferant" style="display:none;"></div>
+    </div>`;
+  wrap.appendChild(filterWrap);
+
+  const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
+  const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
+  makeAutocomplete(qs("#wh-kategorie"), qs("#wh-ac-kategorie"), () => allKategorien, val => {
+    whKategorie = val; saveUIState(); renderWarehouse();
+  });
+  makeAutocomplete(qs("#wh-lieferant"), qs("#wh-ac-lieferant"), () => allLieferanten, val => {
+    whLieferant = val; saveUIState(); renderWarehouse();
+  });
+  qs("#wh-kategorie").addEventListener("input", e => { whKategorie = e.target.value; saveUIState(); });
+  qs("#wh-kategorie").addEventListener("change", () => renderWarehouse());
+  qs("#wh-lieferant").addEventListener("input", e => { whLieferant = e.target.value; saveUIState(); });
+  qs("#wh-lieferant").addEventListener("change", () => renderWarehouse());
+
+  const wk = whKategorie.trim().toLowerCase();
+  const wl = whLieferant.trim().toLowerCase();
+  const locationFiltered = locationAll.filter(a => {
+    if (wk && !(a.category||"").toLowerCase().includes(wk)) return false;
+    if (wl && !(a.supplier||"").toLowerCase().includes(wl)) return false;
+    return true;
+  });
+
   // Kartenliste: nur die am gewählten Lagerort noch offenen Artikel -
   // fertige verschwinden hier bewusst, brauchen keine Aktion mehr.
-  const toCommit = locationAll.filter(a => !commitDone[a.sku]);
+  const toCommit = locationFiltered.filter(a => !commitDone[a.sku]);
 
   if (!plannedAnywhere && locationAll.length === 0) {
     wrap.insertAdjacentHTML("beforeend", `<div style="text-align:center;padding:32px 0;" class="muted">
@@ -1813,20 +1873,21 @@ function renderWarehouse() {
     return;
   }
   if (toCommit.length === 0) {
+    const filterActive = wk || wl;
     wrap.insertAdjacentHTML("beforeend", `<div style="text-align:center;padding:32px 0;" class="muted">
       <i class="ti ti-packages" style="font-size:40px;display:block;margin-bottom:12px;opacity:.5;"></i>
-      Keine offenen Artikel mit Bestand in <strong>${pickInfo.label}</strong>.<br>
-      <span style="font-size:12px;">Anderen Lagerort wählen oder Lagerdaten werden noch geladen.</span>
+      Keine offenen Artikel${filterActive ? " für diesen Filter" : ""} mit Bestand in <strong>${pickInfo.label}</strong>.<br>
+      <span style="font-size:12px;">${filterActive ? "Filter anpassen, anderen" : "Anderen"} Lagerort wählen oder Lagerdaten werden noch geladen.</span>
     </div>`);
     return;
   }
 
-  const totalPlanned   = locationAll.reduce((s, a) => s + (planned[a.sku] || 0), 0);
-  const totalCommitted = locationAll.reduce((s, a) => s + (committed[a.sku] || 0), 0);
+  const totalPlanned   = locationFiltered.reduce((s, a) => s + (planned[a.sku] || 0), 0);
+  const totalCommitted = locationFiltered.reduce((s, a) => s + (committed[a.sku] || 0), 0);
   const totalOpen      = Math.max(0, totalPlanned - totalCommitted);
   wrap.insertAdjacentHTML("beforeend", `
     <div class="card" style="background:var(--bg2);margin-bottom:16px;">
-      <div class="muted" style="text-align:center;margin-bottom:6px;font-size:12px;">Zahlen beziehen sich auf <strong>${pickInfo.label}</strong></div>
+      <div class="muted" style="text-align:center;margin-bottom:6px;font-size:12px;">Zahlen beziehen sich auf <strong>${pickInfo.label}</strong>${(wk||wl) ? " · gefiltert" : ""}</div>
       <div style="display:flex;gap:16px;justify-content:space-around;text-align:center;">
         <div><div style="font-size:20px;font-weight:600;">${totalPlanned}</div><div class="muted">Geplant</div></div>
         <div><div style="font-size:20px;font-weight:600;color:var(--ok);">${totalCommitted}</div><div class="muted">Kommissioniert</div></div>
@@ -1906,13 +1967,14 @@ function renderWarehouse() {
     const refInp = qs(`#ref-${sku}`);
     const entnahme = Math.max(1, parseInt(inp?.value) || 1);
     const ref  = refInp?.value.trim() || "";
+    const bookingUuid = genUUID();
     committed[sku] = (committed[sku] || 0) + entnahme;
     if (!commitLog[sku]) commitLog[sku] = [];
-    commitLog[sku].push({ qty: entnahme, ref, ts: new Date().toLocaleString("de-DE"), user: currentUser });
+    commitLog[sku].push({ qty: entnahme, ref, ts: new Date().toISOString(), user: currentUser, uuid: bookingUuid });
     if (committed[sku] >= (planned[sku] || 0)) commitDone[sku] = true;
     saveState();
     showNotification(`${entnahme}× ${art.name} kommissioniert${ref ? " → " + ref : ""}`);
-    await sendWebhook("COMMIT", { sku, art, qty: entnahme, ref });
+    await sendWebhook("COMMIT", { sku, art, qty: entnahme, ref, uuid: bookingUuid });
     renderWarehouse();
   }));
 
@@ -1948,6 +2010,150 @@ function renderWarehouse() {
     await sendWebhook("REMOVE", { sku, art, currentPlanned: planned[sku] || 0 });
     renderWarehouse();
   }));
+}
+
+// ── KOMMISSIONIERUNGS-HISTORIE (editierbar) ────────────────────────────────
+// Zeigt ALLE bereits gebuchten Kommissionierungen (über alle Lagerorte
+// hinweg - bewusst nicht auf whPickort beschränkt, da man z.B. nach dem
+// Wechsel des Lagerorts trotzdem eine Buchung von vorhin korrigieren will).
+// Menge/Box lassen sich ändern, eine Buchung lässt sich vollständig löschen
+// (Artikel wandert dann wieder in die offene Pickliste).
+function renderWarehouseHistoryBody(wrap) {
+  let bookings = [];
+  Object.keys(commitLog).forEach(sku => {
+    (commitLog[sku] || []).forEach(entry => {
+      if (!entry.uuid) return; // ohne UUID nicht sicher referenzierbar
+      const art = artBySku[sku];
+      bookings.push({
+        sku, uuid: entry.uuid, qty: entry.qty, ref: entry.ref || "",
+        ts: entry.ts, user: entry.user || "",
+        name: art ? art.name : sku,
+      });
+    });
+  });
+  bookings.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+
+  wrap.insertAdjacentHTML("beforeend", `
+    <div class="search-bar" style="margin-bottom:12px;">
+      <i class="ti ti-search"></i>
+      <input type="text" id="wh-history-search" placeholder="Artikel, SKU oder Box suchen …" value="${whHistorySearch}" />
+    </div>`);
+  qs("#wh-history-search").addEventListener("input", e => {
+    whHistorySearch = e.target.value;
+    renderWarehouse();
+  });
+
+  const search = whHistorySearch.trim().toLowerCase();
+  const filtered = search
+    ? bookings.filter(b => (b.name + " " + b.sku + " " + b.ref).toLowerCase().includes(search))
+    : bookings;
+
+  if (filtered.length === 0) {
+    wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="text-align:center;padding:32px 0;">
+      <i class="ti ti-history" style="font-size:36px;display:block;margin-bottom:10px;opacity:.4;"></i>
+      ${bookings.length === 0 ? "Noch keine Kommissionierungen vorhanden." : "Keine Treffer für diese Suche."}
+    </div>`);
+    return;
+  }
+
+  const listWrap = document.createElement("div");
+  listWrap.id = "wh-history-items";
+  wrap.appendChild(listWrap);
+
+  filtered.forEach(b => {
+    const card = document.createElement("div");
+    card.className = "card";
+    const dt = new Date(b.ts);
+    const dtLabel = isNaN(dt) ? b.ts : dt.toLocaleString("de-DE", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" });
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:160px;">
+          <div style="font-weight:500;font-size:13px;">${b.name}</div>
+          <div class="muted">${b.sku}</div>
+          <div class="chip-row">
+            <span class="badge info">${b.qty}×</span>
+            ${b.ref ? `<span class="badge ok">${b.ref}</span>` : `<span class="badge warn">ohne Box</span>`}
+            <span class="badge warn">${dtLabel}${b.user ? " · " + b.user : ""}</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;">
+          <button class="btn-sm btn-edit-booking" data-uuid="${b.uuid}"><i class="ti ti-edit"></i> Bearbeiten</button>
+          <button class="btn-sm btn-danger btn-delete-booking" data-uuid="${b.uuid}" data-sku="${b.sku}"><i class="ti ti-trash"></i> Löschen</button>
+        </div>
+      </div>
+      <div class="booking-edit-row" data-uuid="${b.uuid}" style="display:none;margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          <input class="qty-inp edit-qty" type="number" min="0" value="${b.qty}" style="width:70px;" />
+          <input class="btn edit-ref" type="text" value="${b.ref}" placeholder="Box-Nr." style="width:130px;font-size:12px;padding:6px 8px;" />
+          <button class="btn btn-ok btn-save-booking" data-uuid="${b.uuid}" data-sku="${b.sku}"><i class="ti ti-device-floppy"></i> Speichern</button>
+        </div>
+      </div>`;
+    listWrap.appendChild(card);
+  });
+
+  wrap.querySelectorAll(".btn-edit-booking").forEach(b => b.addEventListener("click", () => {
+    const row = wrap.querySelector(`.booking-edit-row[data-uuid="${b.dataset.uuid}"]`);
+    if (row) row.style.display = row.style.display === "none" ? "block" : "none";
+  }));
+
+  wrap.querySelectorAll(".btn-save-booking").forEach(b => b.addEventListener("click", async () => {
+    const uuid = b.dataset.uuid;
+    const sku  = b.dataset.sku;
+    const row  = wrap.querySelector(`.booking-edit-row[data-uuid="${uuid}"]`);
+    const newQty = Math.max(0, parseInt(row.querySelector(".edit-qty").value) || 0);
+    const newRef = row.querySelector(".edit-ref").value.trim();
+    await applyBookingCorrection(sku, uuid, newQty, newRef);
+  }));
+
+  wrap.querySelectorAll(".btn-delete-booking").forEach(b => b.addEventListener("click", async () => {
+    const uuid  = b.dataset.uuid;
+    const sku   = b.dataset.sku;
+    const entry = (commitLog[sku] || []).find(e => e.uuid === uuid);
+    const info  = entry ? `${entry.qty}× ${entry.ref ? "(" + entry.ref + ")" : "(ohne Box)"}` : "";
+    if (!confirm(`Buchung wirklich löschen? ${info}\n\nDer Artikel wandert danach wieder in die offene Pickliste.`)) return;
+    await applyBookingCorrection(sku, uuid, 0, "");
+  }));
+}
+
+// Korrigiert eine bestehende Buchung, ohne das Backend zu verändern:
+// storniert die alte Buchung vollständig (COMMIT_UNDO) und legt bei
+// newQty > 0 sofort eine neue Buchung mit korrigierter Menge/Box nach
+// (COMMIT). newQty === 0 entspricht damit einem reinen Löschen. Dadurch
+// erscheint eine korrigierte Buchung in der Historie danach als neuer
+// Eintrag mit aktuellem Zeitstempel - technisch korrekt (nichts geht im
+// Log verloren), aber optisch "springt" sie an die erste Stelle.
+async function applyBookingCorrection(sku, uuid, newQty, newRef) {
+  const entry = (commitLog[sku] || []).find(e => e.uuid === uuid);
+  if (!entry) {
+    showNotification("Buchung nicht gefunden (evtl. bereits geändert oder noch nicht synchronisiert).", "err");
+    return;
+  }
+  const art   = artBySku[sku];
+  const oldQty = entry.qty;
+
+  commitLog[sku] = commitLog[sku].filter(e => e.uuid !== uuid);
+  committed[sku] = Math.max(0, (committed[sku] || 0) - oldQty);
+  await sendWebhook("COMMIT_UNDO", { sku, art, undoQty: oldQty });
+
+  if (newQty > 0) {
+    const newUuid = genUUID();
+    committed[sku] = (committed[sku] || 0) + newQty;
+    commitLog[sku].push({ qty: newQty, ref: newRef, ts: new Date().toISOString(), user: currentUser, uuid: newUuid });
+    await sendWebhook("COMMIT", { sku, art, qty: newQty, ref: newRef, uuid: newUuid });
+  }
+
+  if (committed[sku] === 0) delete committed[sku];
+  if ((planned[sku] || 0) > 0 && (committed[sku] || 0) >= planned[sku]) commitDone[sku] = true;
+  else delete commitDone[sku];
+
+  saveState();
+  showNotification(
+    newQty > 0
+      ? `Buchung aktualisiert: ${newQty}× ${art?.name || sku}${newRef ? " → " + newRef : ""}`
+      : `Buchung gelöscht: ${art?.name || sku} ist wieder offen`,
+    "warn"
+  );
+  renderWarehouse();
 }
 
 // ── VERKAUF ───────────────────────────────────────────────────────────────
@@ -2140,7 +2346,7 @@ function sendWebhook(action, data) {
     ? "plan:" + sku
     : null;
 
-  queueChange(action, payload, debounceKey);
+  queueChange(action, payload, debounceKey, data.uuid || null);
 }
 
 // Planung senden: immer absolute Menge als PLAN (einfacher und zuverlässiger als ADJUST)
