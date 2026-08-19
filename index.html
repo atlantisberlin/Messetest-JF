@@ -719,6 +719,15 @@ function isProtected(sku) {
   return !!t && (Date.now() - t) < TOUCH_PROTECTION_MS;
 }
 
+// Erwartet {chains:[...], events:[...]}. Falls der Server (z.B. wegen einer
+// noch nicht aktiven Bereitstellung) eine andere Form liefert - etwa das
+// alte flache Array von vor dieser Erweiterung - wird sicher auf einen
+// leeren Zustand zurückgefallen statt die App abstürzen zu lassen.
+function normalizeCommitLogEntry(raw) {
+  if (raw && Array.isArray(raw.chains) && Array.isArray(raw.events)) return raw;
+  return { chains: [], events: [] };
+}
+
 async function loadRemoteState(silent = false) {
   if (!WEBHOOK_URL) return;
   if (!silent) showNotification("Lade aktuellen Stand…", "ok");
@@ -745,10 +754,10 @@ async function loadRemoteState(silent = false) {
         // Kürzlich lokal geändert: lokalem Stand vertrauen, Server-Antwort
         // für diesen einen Artikel ignorieren (siehe Kommentar oben).
         if (committed[sku]  !== undefined) mergedCommitted[sku] = committed[sku];
-        if (commitLog[sku]  !== undefined) mergedCommitLog[sku] = commitLog[sku];
+        if (commitLog[sku]  !== undefined) mergedCommitLog[sku] = normalizeCommitLogEntry(commitLog[sku]);
       } else {
         if (serverCommitted[sku] !== undefined) mergedCommitted[sku] = serverCommitted[sku];
-        if (serverCommitLog[sku] !== undefined) mergedCommitLog[sku] = serverCommitLog[sku];
+        if (serverCommitLog[sku] !== undefined) mergedCommitLog[sku] = normalizeCommitLogEntry(serverCommitLog[sku]);
       }
     });
     committed = mergedCommitted;
@@ -2035,7 +2044,7 @@ function renderWarehouse() {
     const ref  = refInp?.value.trim() || "";
     const bookingUuid = genUUID();
     committed[sku] = (committed[sku] || 0) + entnahme;
-    if (!commitLog[sku]) commitLog[sku] = { chains: [], events: [] };
+    if (!commitLog[sku] || !Array.isArray(commitLog[sku].chains)) commitLog[sku] = { chains: [], events: [] };
     const newEvent = { qty: entnahme, ref, ts: new Date().toISOString(), user: currentUser, uuid: bookingUuid, aktion: "COMMIT" };
     commitLog[sku].chains.unshift({ chainId: bookingUuid, qty: entnahme, box: ref, events: [newEvent] });
     commitLog[sku].events.push(newEvent);
