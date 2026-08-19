@@ -392,6 +392,7 @@ let whPickort = ""; // "" = noch nicht gewählt
 // (bereits kommissionierte Buchungen, editierbar/löschbar).
 let whKategorie  = "";
 let whLieferant  = "";
+let whSearch     = "";
 let whView       = "pick"; // "pick" | "history"
 let whHistorySearch = "";
 
@@ -418,7 +419,8 @@ async function showMesseDialog() {
           const btn = document.createElement("button");
           btn.className = "btn" + (m.name === messeLabel ? " btn-info" : "");
           btn.style.cssText = "width:100%;text-align:left;justify-content:space-between;display:flex;align-items:center;";
-          const date = m.erstellt ? new Date(m.erstellt).toLocaleDateString("de-DE") : "";
+          const dDate = parseServerTimestamp(m.erstellt);
+          const date = dDate ? dDate.toLocaleDateString("de-DE") : "";
           btn.innerHTML = `<span style="font-weight:500;">${m.name}</span><span class="muted" style="font-size:11px;">${date}</span>`;
           btn.onclick = () => selectMesse(m.name);
           listEl.appendChild(btn);
@@ -461,6 +463,25 @@ function genUUID() {
   });
 }
 
+// BigQuery liefert TIMESTAMP-Werte über die REST-API häufig als
+// Unix-Epoch-Sekunden (inkl. Bruchteil), teils in wissenschaftlicher
+// Notation, z.B. "1.787069425435E9" statt einem lesbaren Datum. Diese
+// Funktion erkennt das und rechnet korrekt in ein JS-Date um (das
+// Unix-Epoch ist in Sekunden, JS erwartet Millisekunden -> ×1000).
+// Fällt auf normales Datums-Parsing zurück für ISO-Strings (z.B. unsere
+// eigenen, lokal mit toISOString() erzeugten Zeitstempel).
+function parseServerTimestamp(ts) {
+  if (ts === null || ts === undefined || ts === "") return null;
+  if (typeof ts === "number") return new Date(ts * 1000);
+  const trimmed = String(ts).trim();
+  if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(trimmed)) {
+    const seconds = parseFloat(trimmed);
+    if (!isNaN(seconds)) return new Date(seconds * 1000);
+  }
+  const d = new Date(trimmed);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 // Qty-Input Handler: speichert bei Enter oder Verlassen des Feldes
 function attachQtyHandler(inp, getSku, getArt, onSave) {
   let lastVal = parseInt(inp.value) || 0;
@@ -497,7 +518,7 @@ function attachQtyHandler(inp, getSku, getArt, onSave) {
 function saveUIState() {
   const s = {
     salesLists, activeSales,
-    messeLabel, WEBHOOK_URL, currentUser, whPickort, whKategorie, whLieferant,
+    messeLabel, WEBHOOK_URL, currentUser, whPickort, whKategorie, whLieferant, whSearch,
     merklisteCollapsed, masterCollapsed
   };
   try { localStorage.setItem("messetool_ui", JSON.stringify(s)); } catch(e){}
@@ -517,6 +538,7 @@ function loadUIState() {
     whPickort   = src.whPickort   || "";
     whKategorie = src.whKategorie || "";
     whLieferant = src.whLieferant || "";
+    whSearch    = src.whSearch    || "";
     if (src.merklisteCollapsed) merklisteCollapsed = src.merklisteCollapsed;
     if (src.masterCollapsed)    masterCollapsed    = src.masterCollapsed;
   } catch(e){}
@@ -683,6 +705,39 @@ function updateSyncStatusUI() {
 }
 
 // ── STATE VOM SERVER LADEN (mit Queue-Schutz) ─────────────────────────────
+// Gleicht Rohbuchungen vom Server (COMMIT + COMMIT_UNDO, chronologisch) zu
+// einer Anzeige-Liste ab: jede COMMIT-Zeile bekommt einen Status
+// ("gepickt" = noch aktiv, "storniert" = durch eine spätere Stornierung
+// verrechnet). Da eine Storno-Zeile nicht auf die konkrete Ursprungs-
+// buchung verweist (das würde eine Tabellenerweiterung erfordern statt nur
+// einer erweiterten Abfrage), wird nach dem FIFO-Prinzip zugeordnet - wie
+// in einer Lagerbuchhaltung. Reicht für eine verständliche Anzeige; die
+// feinere Unterscheidung "geändert" vs. "gelöscht" ist nur innerhalb der
+// aktuellen Sitzung bekannt (siehe applyBookingCorrection) und geht nach
+// einem Reload auf "storniert" zurück.
+function reconcileCommitLog(rawEntries) {
+  const active = [];
+  rawEntries.forEach(e => {
+    if (e.aktion === "COMMIT_UNDO" || e.qty < 0) {
+      let toConsume = Math.abs(e.qty);
+      for (let i = 0; i < active.length && toConsume > 0; i++) {
+        const a = active[i];
+        if (a.voided || a.remaining <= 0) continue;
+        const take = Math.min(a.remaining, toConsume);
+        a.remaining -= take;
+        toConsume -= take;
+        if (a.remaining <= 0) { a.voided = true; a.status = "storniert"; }
+      }
+    } else if (e.qty > 0) {
+      active.push({
+        qty: e.qty, ref: e.ref, ts: e.ts, user: e.user, uuid: e.uuid,
+        remaining: e.qty, voided: false, status: "gepickt",
+      });
+    }
+  });
+  return active.map(a => ({ qty: a.qty, ref: a.ref, ts: a.ts, user: a.user, uuid: a.uuid, voided: a.voided, status: a.status }));
+}
+
 async function loadRemoteState(silent = false) {
   if (!WEBHOOK_URL) return;
   if (!silent) showNotification("Lade aktuellen Stand…", "ok");
@@ -699,7 +754,14 @@ async function loadRemoteState(silent = false) {
     const s = json.state || {};
     planned   = s.planned   || {};
     committed = s.committed || {};
-    commitLog = s.commitLog || {};
+    // Server liefert jetzt ALLE Buchungen (auch Stornierungen), damit wir
+    // erkennen können, welche ursprünglichen Buchungen bereits storniert
+    // wurden - siehe reconcileCommitLog().
+    const rawCommitLog = s.commitLog || {};
+    commitLog = {};
+    Object.keys(rawCommitLog).forEach(sku => {
+      commitLog[sku] = reconcileCommitLog(rawCommitLog[sku] || []);
+    });
 
     // Ausstehende lokale Änderungen erneut anwenden, damit sie nicht
     // durch den frisch geladenen Server-Stand überschrieben werden
@@ -1377,10 +1439,11 @@ function _renderSlaveRow(container, slave, isPlanned) {
     undoBtn.style.cssText = "display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:7px 10px;border-radius:var(--r);border:0.5px solid var(--ok);background:var(--ok-bg);color:var(--ok);font-size:12px;cursor:pointer;";
     undoBtn.innerHTML = `<i class="ti ti-arrow-back-up" style="font-size:14px;"></i> Kommissionierung rückgängig`;
     undoBtn.addEventListener("click", async () => {
-      const lastEntry = (commitLog[sku] || []).at(-1);
+      const activeEntries = (commitLog[sku] || []).filter(e => !e.voided);
+      const lastEntry = activeEntries.at(-1);
       if (!confirm(`Letzte Kommissionierung von "${slave.name}" rückgängig machen?`)) return;
       const undoQty = lastEntry ? lastEntry.qty : (committed[sku] || 0);
-      commitLog[sku] = (commitLog[sku] || []).slice(0, -1);
+      if (lastEntry) { lastEntry.voided = true; lastEntry.status = "gelöscht"; }
       committed[sku] = Math.max(0, (committed[sku] || 0) - undoQty);
       if (committed[sku] === 0) delete committed[sku];
       delete commitDone[sku];
@@ -1825,8 +1888,18 @@ function renderWarehouse() {
 
   const pickInfo = PICKORTE.find(p => p.key === whPickort);
 
-  // Kategorie-/Lieferanten-Filter (z.B. "nur Tauchmasken" oder "nur Mares"),
-  // wirkt auf Statistik UND Kartenliste gleichermaßen.
+  // Namens-/SKU-/EAN-Suche (wie in der Vorbereitung) + Kategorie-/
+  // Lieferanten-Filter (z.B. "nur Tauchmasken" oder "nur Mares"). Wirkt
+  // auf Statistik UND Kartenliste gleichermaßen.
+  const searchWrap = document.createElement("div");
+  searchWrap.className = "search-bar";
+  searchWrap.style.marginBottom = "8px";
+  searchWrap.innerHTML = `
+    <i class="ti ti-search"></i>
+    <input type="text" id="wh-search" placeholder="Name, SKU oder EAN …" value="${whSearch}" />`;
+  wrap.appendChild(searchWrap);
+  qs("#wh-search").addEventListener("input", e => { whSearch = e.target.value; saveUIState(); renderWarehouse(); });
+
   const filterWrap = document.createElement("div");
   filterWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;";
   filterWrap.innerHTML = `
@@ -1853,11 +1926,17 @@ function renderWarehouse() {
   qs("#wh-lieferant").addEventListener("input", e => { whLieferant = e.target.value; saveUIState(); });
   qs("#wh-lieferant").addEventListener("change", () => renderWarehouse());
 
+  const ws = whSearch.trim().toLowerCase();
   const wk = whKategorie.trim().toLowerCase();
   const wl = whLieferant.trim().toLowerCase();
   const locationFiltered = locationAll.filter(a => {
     if (wk && !(a.category||"").toLowerCase().includes(wk)) return false;
     if (wl && !(a.supplier||"").toLowerCase().includes(wl)) return false;
+    if (ws) {
+      const tokens = ws.split(/\s+/).filter(Boolean);
+      const haystack = (a.name + " " + a.sku + " " + (a.ean||"")).toLowerCase();
+      if (!tokens.every(t => haystack.includes(t))) return false;
+    }
     return true;
   });
 
@@ -1873,7 +1952,7 @@ function renderWarehouse() {
     return;
   }
   if (toCommit.length === 0) {
-    const filterActive = wk || wl;
+    const filterActive = ws || wk || wl;
     wrap.insertAdjacentHTML("beforeend", `<div style="text-align:center;padding:32px 0;" class="muted">
       <i class="ti ti-packages" style="font-size:40px;display:block;margin-bottom:12px;opacity:.5;"></i>
       Keine offenen Artikel${filterActive ? " für diesen Filter" : ""} mit Bestand in <strong>${pickInfo.label}</strong>.<br>
@@ -1887,7 +1966,7 @@ function renderWarehouse() {
   const totalOpen      = Math.max(0, totalPlanned - totalCommitted);
   wrap.insertAdjacentHTML("beforeend", `
     <div class="card" style="background:var(--bg2);margin-bottom:16px;">
-      <div class="muted" style="text-align:center;margin-bottom:6px;font-size:12px;">Zahlen beziehen sich auf <strong>${pickInfo.label}</strong>${(wk||wl) ? " · gefiltert" : ""}</div>
+      <div class="muted" style="text-align:center;margin-bottom:6px;font-size:12px;">Zahlen beziehen sich auf <strong>${pickInfo.label}</strong>${(ws||wk||wl) ? " · gefiltert" : ""}</div>
       <div style="display:flex;gap:16px;justify-content:space-around;text-align:center;">
         <div><div style="font-size:20px;font-weight:600;">${totalPlanned}</div><div class="muted">Geplant</div></div>
         <div><div style="font-size:20px;font-weight:600;color:var(--ok);">${totalCommitted}</div><div class="muted">Kommissioniert</div></div>
@@ -1905,7 +1984,7 @@ function renderWarehouse() {
     const comm  = committed[sku] || 0;
     const done  = commitDone[sku] || false;
     const offen = Math.max(0, qty - comm);
-    const log   = commitLog[sku] || [];
+    const log   = (commitLog[sku] || []).filter(e => !e.voided);
     const stockHere   = art.stocks?.[whPickort] || 0;
     const maxEntnahme = Math.min(offen, stockHere);
     const master = getMasterOf(art);
@@ -1917,10 +1996,14 @@ function renderWarehouse() {
     const logHTML = log.length ? `
       <div style="margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);">
         <div class="muted" style="font-size:11px;margin-bottom:4px;">Buchungshistorie:</div>
-        ${log.map(e => `<div style="font-size:12px;color:var(--text2);">
+        ${log.map(e => {
+          const d = parseServerTimestamp(e.ts);
+          const timeLabel = d ? d.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}) : "Zeit unbekannt";
+          return `<div style="font-size:12px;color:var(--text2);">
           <i class="ti ti-box" style="font-size:10px;"></i>
-          ${e.qty}× – ${e.ref ? `<em>${e.ref}</em>` : "kein Kommentar"} – ${new Date(e.ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}
-        </div>`).join("")}
+          ${e.qty}× – ${e.ref ? `<em>${e.ref}</em>` : "kein Kommentar"} – ${timeLabel}
+        </div>`;
+        }).join("")}
       </div>` : "";
 
     card.innerHTML = `
@@ -1970,7 +2053,7 @@ function renderWarehouse() {
     const bookingUuid = genUUID();
     committed[sku] = (committed[sku] || 0) + entnahme;
     if (!commitLog[sku]) commitLog[sku] = [];
-    commitLog[sku].push({ qty: entnahme, ref, ts: new Date().toISOString(), user: currentUser, uuid: bookingUuid });
+    commitLog[sku].push({ qty: entnahme, ref, ts: new Date().toISOString(), user: currentUser, uuid: bookingUuid, status: "gepickt", voided: false });
     if (committed[sku] >= (planned[sku] || 0)) commitDone[sku] = true;
     saveState();
     showNotification(`${entnahme}× ${art.name} kommissioniert${ref ? " → " + ref : ""}`);
@@ -1981,11 +2064,12 @@ function renderWarehouse() {
   wrap.querySelectorAll(".btn-undo").forEach(b => b.addEventListener("click", async () => {
     const sku = b.dataset.sku;
     const art = articles.find(a => a.sku === sku);
-    const lastEntry = (commitLog[sku] || []).at(-1);
+    const activeEntries = (commitLog[sku] || []).filter(e => !e.voided);
+    const lastEntry = activeEntries.at(-1);
     const info = lastEntry ? `${lastEntry.qty}× (${lastEntry.ref || "kein Kommentar"})` : `${committed[sku] || 0}×`;
     if (!confirm(`Letzte Buchung von "${art.name}" rückgängig machen?\n${info}`)) return;
     const undoQty = lastEntry ? lastEntry.qty : (committed[sku] || 0);
-    commitLog[sku] = (commitLog[sku] || []).slice(0, -1);
+    if (lastEntry) { lastEntry.voided = true; lastEntry.status = "gelöscht"; }
     committed[sku] = Math.max(0, (committed[sku] || 0) - undoQty);
     if (committed[sku] === 0) delete committed[sku];
     delete commitDone[sku];
@@ -2028,10 +2112,19 @@ function renderWarehouseHistoryBody(wrap) {
         sku, uuid: entry.uuid, qty: entry.qty, ref: entry.ref || "",
         ts: entry.ts, user: entry.user || "",
         name: art ? art.name : sku,
+        voided: !!entry.voided,
+        status: entry.status || "gepickt",
       });
     });
   });
-  bookings.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+  bookings.sort((a, b) => {
+    const da = parseServerTimestamp(a.ts);
+    const db = parseServerTimestamp(b.ts);
+    if (!da && !db) return 0;
+    if (!da) return 1;   // Einträge ohne lesbares Datum ans Ende
+    if (!db) return -1;
+    return db - da;
+  });
 
   wrap.insertAdjacentHTML("beforeend", `
     <div class="search-bar" style="margin-bottom:12px;">
@@ -2060,34 +2153,50 @@ function renderWarehouseHistoryBody(wrap) {
   listWrap.id = "wh-history-items";
   wrap.appendChild(listWrap);
 
+  // Status -> Badge-Farbe/Icon. "gepickt" = aktiv, grün. "geändert" nur
+  // innerhalb der aktuellen Sitzung bekannt, orange. "gelöscht"/"storniert"
+  // = storniert (gelöscht = diese Sitzung kennt den Grund genauer, storniert
+  // = aus Server-Daten rekonstruiert, siehe reconcileCommitLog), rot/grau.
+  const STATUS_STYLE = {
+    "gepickt":   { cls: "ok",   icon: "ti-check",        label: "Gepickt" },
+    "geändert":  { cls: "warn", icon: "ti-edit",         label: "Geändert" },
+    "gelöscht":  { cls: "err",  icon: "ti-trash",        label: "Gelöscht" },
+    "storniert": { cls: "err",  icon: "ti-arrow-back-up", label: "Storniert" },
+  };
+
   filtered.forEach(b => {
     const card = document.createElement("div");
     card.className = "card";
-    const dt = new Date(b.ts);
-    const dtLabel = isNaN(dt) ? b.ts : dt.toLocaleString("de-DE", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" });
+    if (b.voided) card.style.opacity = "0.6";
+    const dt = parseServerTimestamp(b.ts);
+    const dtLabel = dt ? dt.toLocaleString("de-DE", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" }) : "Datum unbekannt";
+    const st = STATUS_STYLE[b.status] || STATUS_STYLE["gepickt"];
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
         <div style="flex:1;min-width:160px;">
-          <div style="font-weight:500;font-size:13px;">${b.name}</div>
+          <div style="font-weight:500;font-size:13px;${b.voided ? "text-decoration:line-through;" : ""}">${b.name}</div>
           <div class="muted">${b.sku}</div>
           <div class="chip-row">
+            <span class="badge ${st.cls}"><i class="ti ${st.icon}" style="font-size:10px;"></i> ${st.label}</span>
             <span class="badge info">${b.qty}×</span>
             ${b.ref ? `<span class="badge ok">${b.ref}</span>` : `<span class="badge warn">ohne Box</span>`}
             <span class="badge warn">${dtLabel}${b.user ? " · " + b.user : ""}</span>
           </div>
         </div>
+        ${!b.voided ? `
         <div style="display:flex;gap:6px;flex-shrink:0;">
           <button class="btn-sm btn-edit-booking" data-uuid="${b.uuid}"><i class="ti ti-edit"></i> Bearbeiten</button>
           <button class="btn-sm btn-danger btn-delete-booking" data-uuid="${b.uuid}" data-sku="${b.sku}"><i class="ti ti-trash"></i> Löschen</button>
-        </div>
+        </div>` : ""}
       </div>
+      ${!b.voided ? `
       <div class="booking-edit-row" data-uuid="${b.uuid}" style="display:none;margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
           <input class="qty-inp edit-qty" type="number" min="0" value="${b.qty}" style="width:70px;" />
           <input class="btn edit-ref" type="text" value="${b.ref}" placeholder="Box-Nr." style="width:130px;font-size:12px;padding:6px 8px;" />
           <button class="btn btn-ok btn-save-booking" data-uuid="${b.uuid}" data-sku="${b.sku}"><i class="ti ti-device-floppy"></i> Speichern</button>
         </div>
-      </div>`;
+      </div>` : ""}`;
     listWrap.appendChild(card);
   });
 
@@ -2123,7 +2232,7 @@ function renderWarehouseHistoryBody(wrap) {
 // Eintrag mit aktuellem Zeitstempel - technisch korrekt (nichts geht im
 // Log verloren), aber optisch "springt" sie an die erste Stelle.
 async function applyBookingCorrection(sku, uuid, newQty, newRef) {
-  const entry = (commitLog[sku] || []).find(e => e.uuid === uuid);
+  const entry = (commitLog[sku] || []).find(e => e.uuid === uuid && !e.voided);
   if (!entry) {
     showNotification("Buchung nicht gefunden (evtl. bereits geändert oder noch nicht synchronisiert).", "err");
     return;
@@ -2131,14 +2240,17 @@ async function applyBookingCorrection(sku, uuid, newQty, newRef) {
   const art   = artBySku[sku];
   const oldQty = entry.qty;
 
-  commitLog[sku] = commitLog[sku].filter(e => e.uuid !== uuid);
+  // Alte Buchung nicht entfernen, sondern als storniert kennzeichnen (bleibt
+  // in der Historie sichtbar, zählt aber nicht mehr zur Summe).
+  entry.voided = true;
+  entry.status = newQty > 0 ? "geändert" : "gelöscht";
   committed[sku] = Math.max(0, (committed[sku] || 0) - oldQty);
   await sendWebhook("COMMIT_UNDO", { sku, art, undoQty: oldQty });
 
   if (newQty > 0) {
     const newUuid = genUUID();
     committed[sku] = (committed[sku] || 0) + newQty;
-    commitLog[sku].push({ qty: newQty, ref: newRef, ts: new Date().toISOString(), user: currentUser, uuid: newUuid });
+    commitLog[sku].push({ qty: newQty, ref: newRef, ts: new Date().toISOString(), user: currentUser, uuid: newUuid, status: "geändert", voided: false });
     await sendWebhook("COMMIT", { sku, art, qty: newQty, ref: newRef, uuid: newUuid });
   }
 
