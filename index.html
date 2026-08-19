@@ -748,13 +748,19 @@ async function loadRemoteState(silent = false) {
     const serverCommitLog = s.commitLog || {};
     const mergedCommitted = {};
     const mergedCommitLog = {};
-    const allSkus = new Set([...Object.keys(serverCommitted), ...Object.keys(committed)]);
+    const allSkus = new Set([...Object.keys(serverCommitted), ...Object.keys(serverCommitLog), ...Object.keys(committed), ...Object.keys(commitLog)]);
     allSkus.forEach(sku => {
-      if (isProtected(sku)) {
-        // Kürzlich lokal geändert: lokalem Stand vertrauen, Server-Antwort
-        // für diesen einen Artikel ignorieren (siehe Kommentar oben).
-        if (committed[sku]  !== undefined) mergedCommitted[sku] = committed[sku];
-        if (commitLog[sku]  !== undefined) mergedCommitLog[sku] = normalizeCommitLogEntry(commitLog[sku]);
+      const serverHasSku = serverCommitted[sku] !== undefined || serverCommitLog[sku] !== undefined;
+      if (isProtected(sku) || !serverHasSku) {
+        // Entweder kürzlich lokal geändert (siehe Kommentar oben), ODER der
+        // Server liefert für diesen Artikel gerade nichts - was an der
+        // BigQuery-Streaming-Verzögerung liegen kann, nicht zwingend daran,
+        // dass es dort wirklich nichts mehr gibt. In beiden Fällen: lieber
+        // den zuletzt bekannten lokalen Stand behalten als ihn fälschlich
+        // zu löschen. Der Server muss AKTIV etwas liefern, damit er den
+        // lokalen Stand überschreiben darf.
+        if (committed[sku] !== undefined) mergedCommitted[sku] = committed[sku];
+        if (commitLog[sku] !== undefined) mergedCommitLog[sku] = normalizeCommitLogEntry(commitLog[sku]);
       } else {
         if (serverCommitted[sku] !== undefined) mergedCommitted[sku] = serverCommitted[sku];
         if (serverCommitLog[sku] !== undefined) mergedCommitLog[sku] = normalizeCommitLogEntry(serverCommitLog[sku]);
