@@ -705,37 +705,18 @@ function updateSyncStatusUI() {
 }
 
 // ── STATE VOM SERVER LADEN (mit Queue-Schutz) ─────────────────────────────
-// Gleicht Rohbuchungen vom Server (COMMIT + COMMIT_UNDO, chronologisch) zu
-// einer Anzeige-Liste ab: jede COMMIT-Zeile bekommt einen Status
-// ("gepickt" = noch aktiv, "storniert" = durch eine spätere Stornierung
-// verrechnet). Da eine Storno-Zeile nicht auf die konkrete Ursprungs-
-// buchung verweist (das würde eine Tabellenerweiterung erfordern statt nur
-// einer erweiterten Abfrage), wird nach dem FIFO-Prinzip zugeordnet - wie
-// in einer Lagerbuchhaltung. Reicht für eine verständliche Anzeige; die
-// feinere Unterscheidung "geändert" vs. "gelöscht" ist nur innerhalb der
-// aktuellen Sitzung bekannt (siehe applyBookingCorrection) und geht nach
-// einem Reload auf "storniert" zurück.
-function reconcileCommitLog(rawEntries) {
-  const active = [];
-  rawEntries.forEach(e => {
-    if (e.aktion === "COMMIT_UNDO" || e.qty < 0) {
-      let toConsume = Math.abs(e.qty);
-      for (let i = 0; i < active.length && toConsume > 0; i++) {
-        const a = active[i];
-        if (a.voided || a.remaining <= 0) continue;
-        const take = Math.min(a.remaining, toConsume);
-        a.remaining -= take;
-        toConsume -= take;
-        if (a.remaining <= 0) { a.voided = true; a.status = "storniert"; }
-      }
-    } else if (e.qty > 0) {
-      active.push({
-        qty: e.qty, ref: e.ref, ts: e.ts, user: e.user, uuid: e.uuid,
-        remaining: e.qty, voided: false, status: "gepickt",
-      });
-    }
-  });
-  return active.map(a => ({ qty: a.qty, ref: a.ref, ts: a.ts, user: a.user, uuid: a.uuid, voided: a.voided, status: a.status }));
+// Kurzzeitiger Schutz gegen BigQuery-Streaming-Lesefenster: Nach einer
+// lokalen Änderung an einem Artikel kann es einige Sekunden dauern, bis
+// eine erneute Abfrage die Änderung wirklich sieht. Ohne diesen Schutz
+// würde der automatische 30-Sekunden-Refresh eine gerade gemachte
+// Korrektur kurzzeitig wieder "rückgängig" erscheinen lassen, bis
+// BigQuery aufgeholt hat.
+const TOUCH_PROTECTION_MS = 25000;
+let recentlyTouched = {}; // sku -> Zeitpunkt der letzten lokalen Änderung
+function touchSku(sku) { recentlyTouched[sku] = Date.now(); }
+function isProtected(sku) {
+  const t = recentlyTouched[sku];
+  return !!t && (Date.now() - t) < TOUCH_PROTECTION_MS;
 }
 
 async function loadRemoteState(silent = false) {
@@ -752,16 +733,26 @@ async function loadRemoteState(silent = false) {
     }
 
     const s = json.state || {};
-    planned   = s.planned   || {};
-    committed = s.committed || {};
-    // Server liefert jetzt ALLE Buchungen (auch Stornierungen), damit wir
-    // erkennen können, welche ursprünglichen Buchungen bereits storniert
-    // wurden - siehe reconcileCommitLog().
-    const rawCommitLog = s.commitLog || {};
-    commitLog = {};
-    Object.keys(rawCommitLog).forEach(sku => {
-      commitLog[sku] = reconcileCommitLog(rawCommitLog[sku] || []);
+    planned = s.planned || {};
+
+    const serverCommitted = s.committed || {};
+    const serverCommitLog = s.commitLog || {};
+    const mergedCommitted = {};
+    const mergedCommitLog = {};
+    const allSkus = new Set([...Object.keys(serverCommitted), ...Object.keys(committed)]);
+    allSkus.forEach(sku => {
+      if (isProtected(sku)) {
+        // Kürzlich lokal geändert: lokalem Stand vertrauen, Server-Antwort
+        // für diesen einen Artikel ignorieren (siehe Kommentar oben).
+        if (committed[sku]  !== undefined) mergedCommitted[sku] = committed[sku];
+        if (commitLog[sku]  !== undefined) mergedCommitLog[sku] = commitLog[sku];
+      } else {
+        if (serverCommitted[sku] !== undefined) mergedCommitted[sku] = serverCommitted[sku];
+        if (serverCommitLog[sku] !== undefined) mergedCommitLog[sku] = serverCommitLog[sku];
+      }
     });
+    committed = mergedCommitted;
+    commitLog = mergedCommitLog;
 
     // Ausstehende lokale Änderungen erneut anwenden, damit sie nicht
     // durch den frisch geladenen Server-Stand überschrieben werden
@@ -1439,18 +1430,14 @@ function _renderSlaveRow(container, slave, isPlanned) {
     undoBtn.style.cssText = "display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:7px 10px;border-radius:var(--r);border:0.5px solid var(--ok);background:var(--ok-bg);color:var(--ok);font-size:12px;cursor:pointer;";
     undoBtn.innerHTML = `<i class="ti ti-arrow-back-up" style="font-size:14px;"></i> Kommissionierung rückgängig`;
     undoBtn.addEventListener("click", async () => {
-      const activeEntries = (commitLog[sku] || []).filter(e => !e.voided);
-      const lastEntry = activeEntries.at(-1);
+      const chains = (commitLog[sku] && commitLog[sku].chains) || [];
+      const lastChain = chains[0];
       if (!confirm(`Letzte Kommissionierung von "${slave.name}" rückgängig machen?`)) return;
-      const undoQty = lastEntry ? lastEntry.qty : (committed[sku] || 0);
-      if (lastEntry) { lastEntry.voided = true; lastEntry.status = "gelöscht"; }
-      committed[sku] = Math.max(0, (committed[sku] || 0) - undoQty);
-      if (committed[sku] === 0) delete committed[sku];
-      delete commitDone[sku];
-      saveState();
-      showNotification(`${slave.name} – Kommissionierung rückgängig`, "warn");
-      await sendWebhook("COMMIT_UNDO", { sku, art: slave, undoQty });
-      renderMerklisteView();
+      if (!lastChain) {
+        showNotification("Keine Buchung zum Rückgängigmachen gefunden.", "err");
+        return;
+      }
+      await applyBookingCorrection(sku, lastChain.chainId, 0, "");
     });
     bottomRow.appendChild(undoBtn);
   } else {
@@ -1984,7 +1971,7 @@ function renderWarehouse() {
     const comm  = committed[sku] || 0;
     const done  = commitDone[sku] || false;
     const offen = Math.max(0, qty - comm);
-    const log   = (commitLog[sku] || []).filter(e => !e.voided);
+    const chains = (commitLog[sku] && commitLog[sku].chains) || [];
     const stockHere   = art.stocks?.[whPickort] || 0;
     const maxEntnahme = Math.min(offen, stockHere);
     const master = getMasterOf(art);
@@ -1993,17 +1980,13 @@ function renderWarehouse() {
     card.className = "card";
     card.style.borderColor = done ? "var(--ok)" : "var(--border)";
 
-    const logHTML = log.length ? `
+    const logHTML = chains.length ? `
       <div style="margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);">
-        <div class="muted" style="font-size:11px;margin-bottom:4px;">Buchungshistorie:</div>
-        ${log.map(e => {
-          const d = parseServerTimestamp(e.ts);
-          const timeLabel = d ? d.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}) : "Zeit unbekannt";
-          return `<div style="font-size:12px;color:var(--text2);">
+        <div class="muted" style="font-size:11px;margin-bottom:4px;">Aktuell kommissioniert:</div>
+        ${chains.map(c => `<div style="font-size:12px;color:var(--text2);">
           <i class="ti ti-box" style="font-size:10px;"></i>
-          ${e.qty}× – ${e.ref ? `<em>${e.ref}</em>` : "kein Kommentar"} – ${timeLabel}
-        </div>`;
-        }).join("")}
+          ${c.qty}× – ${c.box ? `<em>${c.box}</em>` : "ohne Box"}${c.events && c.events.length > 1 ? ` <span class="muted" style="font-size:10px;">(korrigiert)</span>` : ""}
+        </div>`).join("")}
       </div>` : "";
 
     card.innerHTML = `
@@ -2052,8 +2035,10 @@ function renderWarehouse() {
     const ref  = refInp?.value.trim() || "";
     const bookingUuid = genUUID();
     committed[sku] = (committed[sku] || 0) + entnahme;
-    if (!commitLog[sku]) commitLog[sku] = [];
-    commitLog[sku].push({ qty: entnahme, ref, ts: new Date().toISOString(), user: currentUser, uuid: bookingUuid, status: "gepickt", voided: false });
+    if (!commitLog[sku]) commitLog[sku] = { chains: [], events: [] };
+    const newEvent = { qty: entnahme, ref, ts: new Date().toISOString(), user: currentUser, uuid: bookingUuid, aktion: "COMMIT" };
+    commitLog[sku].chains.unshift({ chainId: bookingUuid, qty: entnahme, box: ref, events: [newEvent] });
+    commitLog[sku].events.push(newEvent);
     if (committed[sku] >= (planned[sku] || 0)) commitDone[sku] = true;
     saveState();
     showNotification(`${entnahme}× ${art.name} kommissioniert${ref ? " → " + ref : ""}`);
@@ -2064,19 +2049,15 @@ function renderWarehouse() {
   wrap.querySelectorAll(".btn-undo").forEach(b => b.addEventListener("click", async () => {
     const sku = b.dataset.sku;
     const art = articles.find(a => a.sku === sku);
-    const activeEntries = (commitLog[sku] || []).filter(e => !e.voided);
-    const lastEntry = activeEntries.at(-1);
-    const info = lastEntry ? `${lastEntry.qty}× (${lastEntry.ref || "kein Kommentar"})` : `${committed[sku] || 0}×`;
+    const chains = (commitLog[sku] && commitLog[sku].chains) || [];
+    const lastChain = chains[0]; // neueste Kette zuerst, siehe Backend-Sortierung
+    const info = lastChain ? `${lastChain.qty}× (${lastChain.box || "ohne Box"})` : `${committed[sku] || 0}×`;
     if (!confirm(`Letzte Buchung von "${art.name}" rückgängig machen?\n${info}`)) return;
-    const undoQty = lastEntry ? lastEntry.qty : (committed[sku] || 0);
-    if (lastEntry) { lastEntry.voided = true; lastEntry.status = "gelöscht"; }
-    committed[sku] = Math.max(0, (committed[sku] || 0) - undoQty);
-    if (committed[sku] === 0) delete committed[sku];
-    delete commitDone[sku];
-    saveState();
-    showNotification(`${art.name} – letzte Buchung rückgängig gemacht`, "warn");
-    await sendWebhook("COMMIT_UNDO", { sku, art, undoQty });
-    renderWarehouse();
+    if (!lastChain) {
+      showNotification("Keine Buchung zum Rückgängigmachen gefunden.", "err");
+      return;
+    }
+    await applyBookingCorrection(sku, lastChain.chainId, 0, "");
   }));
 
   wrap.querySelectorAll(".btn-remove-from-prep").forEach(b => b.addEventListener("click", async () => {
@@ -2103,27 +2084,17 @@ function renderWarehouse() {
 // Menge/Box lassen sich ändern, eine Buchung lässt sich vollständig löschen
 // (Artikel wandert dann wieder in die offene Pickliste).
 function renderWarehouseHistoryBody(wrap) {
-  let bookings = [];
+  // Pro Artikel zusammenfassen: aktive Ketten (= aktueller Stand pro Box)
+  // + komplette Rohhistorie (für die aufklappbare Detailansicht).
+  let articleGroups = [];
   Object.keys(commitLog).forEach(sku => {
-    (commitLog[sku] || []).forEach(entry => {
-      if (!entry.uuid) return; // ohne UUID nicht sicher referenzierbar
-      const art = artBySku[sku];
-      bookings.push({
-        sku, uuid: entry.uuid, qty: entry.qty, ref: entry.ref || "",
-        ts: entry.ts, user: entry.user || "",
-        name: art ? art.name : sku,
-        voided: !!entry.voided,
-        status: entry.status || "gepickt",
-      });
-    });
-  });
-  bookings.sort((a, b) => {
-    const da = parseServerTimestamp(a.ts);
-    const db = parseServerTimestamp(b.ts);
-    if (!da && !db) return 0;
-    if (!da) return 1;   // Einträge ohne lesbares Datum ans Ende
-    if (!db) return -1;
-    return db - da;
+    const data = commitLog[sku];
+    if (!data) return;
+    const chains = data.chains || [];
+    const events = data.events || [];
+    if (chains.length === 0 && events.length === 0) return;
+    const art = artBySku[sku];
+    articleGroups.push({ sku, name: art ? art.name : sku, chains, events });
   });
 
   wrap.insertAdjacentHTML("beforeend", `
@@ -2138,13 +2109,27 @@ function renderWarehouseHistoryBody(wrap) {
 
   const search = whHistorySearch.trim().toLowerCase();
   const filtered = search
-    ? bookings.filter(b => (b.name + " " + b.sku + " " + b.ref).toLowerCase().includes(search))
-    : bookings;
+    ? articleGroups.filter(g =>
+        (g.name + " " + g.sku).toLowerCase().includes(search) ||
+        g.chains.some(c => (c.box || "").toLowerCase().includes(search)))
+    : articleGroups;
+
+  // Neueste Aktivität zuerst (letztes Ereignis pro Artikel entscheidet)
+  filtered.sort((a, b) => {
+    const la = a.events[a.events.length - 1];
+    const lb = b.events[b.events.length - 1];
+    const da = la ? parseServerTimestamp(la.ts) : null;
+    const db = lb ? parseServerTimestamp(lb.ts) : null;
+    if (!da && !db) return 0;
+    if (!da) return 1;
+    if (!db) return -1;
+    return db - da;
+  });
 
   if (filtered.length === 0) {
     wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="text-align:center;padding:32px 0;">
       <i class="ti ti-history" style="font-size:36px;display:block;margin-bottom:10px;opacity:.4;"></i>
-      ${bookings.length === 0 ? "Noch keine Kommissionierungen vorhanden." : "Keine Treffer für diese Suche."}
+      ${articleGroups.length === 0 ? "Noch keine Kommissionierungen vorhanden." : "Keine Treffer für diese Suche."}
     </div>`);
     return;
   }
@@ -2153,108 +2138,140 @@ function renderWarehouseHistoryBody(wrap) {
   listWrap.id = "wh-history-items";
   wrap.appendChild(listWrap);
 
-  // Status -> Badge-Farbe/Icon. "gepickt" = aktiv, grün. "geändert" nur
-  // innerhalb der aktuellen Sitzung bekannt, orange. "gelöscht"/"storniert"
-  // = storniert (gelöscht = diese Sitzung kennt den Grund genauer, storniert
-  // = aus Server-Daten rekonstruiert, siehe reconcileCommitLog), rot/grau.
-  const STATUS_STYLE = {
-    "gepickt":   { cls: "ok",   icon: "ti-check",        label: "Gepickt" },
-    "geändert":  { cls: "warn", icon: "ti-edit",         label: "Geändert" },
-    "gelöscht":  { cls: "err",  icon: "ti-trash",        label: "Gelöscht" },
-    "storniert": { cls: "err",  icon: "ti-arrow-back-up", label: "Storniert" },
-  };
-
-  filtered.forEach(b => {
+  filtered.forEach(g => {
     const card = document.createElement("div");
     card.className = "card";
-    if (b.voided) card.style.opacity = "0.6";
-    const dt = parseServerTimestamp(b.ts);
-    const dtLabel = dt ? dt.toLocaleString("de-DE", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" }) : "Datum unbekannt";
-    const st = STATUS_STYLE[b.status] || STATUS_STYLE["gepickt"];
+
+    const boxChips = g.chains.length
+      ? g.chains.map(c => `<span class="badge ok">${c.qty}× ${c.box ? c.box : "ohne Box"}</span>`).join("")
+      : `<span class="badge warn">Keine aktive Buchung mehr</span>`;
+
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
         <div style="flex:1;min-width:160px;">
-          <div style="font-weight:500;font-size:13px;${b.voided ? "text-decoration:line-through;" : ""}">${b.name}</div>
-          <div class="muted">${b.sku}</div>
-          <div class="chip-row">
-            <span class="badge ${st.cls}"><i class="ti ${st.icon}" style="font-size:10px;"></i> ${st.label}</span>
-            <span class="badge info">${b.qty}×</span>
-            ${b.ref ? `<span class="badge ok">${b.ref}</span>` : `<span class="badge warn">ohne Box</span>`}
-            <span class="badge warn">${dtLabel}${b.user ? " · " + b.user : ""}</span>
-          </div>
+          <div style="font-weight:500;font-size:13px;">${g.name}</div>
+          <div class="muted">${g.sku}</div>
+          <div class="chip-row">${boxChips}</div>
         </div>
-        ${!b.voided ? `
-        <div style="display:flex;gap:6px;flex-shrink:0;">
-          <button class="btn-sm btn-edit-booking" data-uuid="${b.uuid}"><i class="ti ti-edit"></i> Bearbeiten</button>
-          <button class="btn-sm btn-danger btn-delete-booking" data-uuid="${b.uuid}" data-sku="${b.sku}"><i class="ti ti-trash"></i> Löschen</button>
-        </div>` : ""}
+        <button class="btn-sm btn-toggle-history" data-sku="${g.sku}">
+          <i class="ti ti-chevron-down"></i> Historie
+        </button>
       </div>
-      ${!b.voided ? `
-      <div class="booking-edit-row" data-uuid="${b.uuid}" style="display:none;margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-          <input class="qty-inp edit-qty" type="number" min="0" value="${b.qty}" style="width:70px;" />
-          <input class="btn edit-ref" type="text" value="${b.ref}" placeholder="Box-Nr." style="width:130px;font-size:12px;padding:6px 8px;" />
-          <button class="btn btn-ok btn-save-booking" data-uuid="${b.uuid}" data-sku="${b.sku}"><i class="ti ti-device-floppy"></i> Speichern</button>
-        </div>
-      </div>` : ""}`;
+      <div class="history-detail" data-sku="${g.sku}" style="display:none;margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
+        ${g.chains.length ? `
+        <div class="muted" style="font-size:11px;margin-bottom:6px;">Aktuelle Buchungen (bearbeitbar):</div>
+        ${g.chains.map(c => `
+          <div class="chain-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:0.5px solid var(--border);">
+            <div style="font-size:12px;">${c.qty}× – ${c.box || "ohne Box"}${c.events.length > 1 ? ` <span class="muted">(${c.events.length} Ereignisse)</span>` : ""}</div>
+            <div style="display:flex;gap:6px;">
+              <button class="btn-sm btn-edit-chain" data-sku="${g.sku}" data-chain="${c.chainId}"><i class="ti ti-edit"></i> Bearbeiten</button>
+              <button class="btn-sm btn-danger btn-delete-chain" data-sku="${g.sku}" data-chain="${c.chainId}"><i class="ti ti-trash"></i> Löschen</button>
+            </div>
+          </div>
+          <div class="chain-edit-row" data-sku="${g.sku}" data-chain="${c.chainId}" style="display:none;padding:8px 0;">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              <input class="qty-inp edit-qty" type="number" min="0" value="${c.qty}" style="width:70px;" />
+              <input class="btn edit-ref" type="text" value="${c.box}" placeholder="Box-Nr." style="width:130px;font-size:12px;padding:6px 8px;" />
+              <button class="btn btn-ok btn-save-chain" data-sku="${g.sku}" data-chain="${c.chainId}"><i class="ti ti-device-floppy"></i> Speichern</button>
+            </div>
+          </div>`).join("")}
+        ` : ""}
+        <div class="muted" style="font-size:11px;margin:10px 0 6px;">Vollständiger Ereignisverlauf:</div>
+        ${g.events.map(e => {
+          const d = parseServerTimestamp(e.ts);
+          const dLabel = d ? d.toLocaleString("de-DE", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : "Datum unbekannt";
+          const isUndo = e.aktion === "COMMIT_UNDO" || e.qty < 0;
+          return `<div style="font-size:12px;color:var(--text2);display:flex;gap:6px;align-items:center;padding:2px 0;">
+            <i class="ti ${isUndo ? "ti-arrow-back-up" : "ti-check"}" style="font-size:11px;color:${isUndo ? "var(--err)" : "var(--ok)"};"></i>
+            ${dLabel} · ${e.user || "?"} · ${isUndo ? "storniert" : "gebucht"} ${Math.abs(e.qty)}×${e.ref ? " → " + e.ref : ""}
+          </div>`;
+        }).join("")}
+      </div>`;
     listWrap.appendChild(card);
   });
 
-  wrap.querySelectorAll(".btn-edit-booking").forEach(b => b.addEventListener("click", () => {
-    const row = wrap.querySelector(`.booking-edit-row[data-uuid="${b.dataset.uuid}"]`);
+  wrap.querySelectorAll(".btn-toggle-history").forEach(b => b.addEventListener("click", () => {
+    const row = wrap.querySelector(`.history-detail[data-sku="${b.dataset.sku}"]`);
     if (row) row.style.display = row.style.display === "none" ? "block" : "none";
   }));
 
-  wrap.querySelectorAll(".btn-save-booking").forEach(b => b.addEventListener("click", async () => {
-    const uuid = b.dataset.uuid;
-    const sku  = b.dataset.sku;
-    const row  = wrap.querySelector(`.booking-edit-row[data-uuid="${uuid}"]`);
-    const newQty = Math.max(0, parseInt(row.querySelector(".edit-qty").value) || 0);
-    const newRef = row.querySelector(".edit-ref").value.trim();
-    await applyBookingCorrection(sku, uuid, newQty, newRef);
+  wrap.querySelectorAll(".btn-edit-chain").forEach(b => b.addEventListener("click", () => {
+    const row = wrap.querySelector(`.chain-edit-row[data-sku="${b.dataset.sku}"][data-chain="${b.dataset.chain}"]`);
+    if (row) row.style.display = row.style.display === "none" ? "block" : "none";
   }));
 
-  wrap.querySelectorAll(".btn-delete-booking").forEach(b => b.addEventListener("click", async () => {
-    const uuid  = b.dataset.uuid;
+  wrap.querySelectorAll(".btn-save-chain").forEach(b => b.addEventListener("click", async () => {
     const sku   = b.dataset.sku;
-    const entry = (commitLog[sku] || []).find(e => e.uuid === uuid);
-    const info  = entry ? `${entry.qty}× ${entry.ref ? "(" + entry.ref + ")" : "(ohne Box)"}` : "";
+    const chain = b.dataset.chain;
+    const row   = wrap.querySelector(`.chain-edit-row[data-sku="${sku}"][data-chain="${chain}"]`);
+    const newQty = Math.max(0, parseInt(row.querySelector(".edit-qty").value) || 0);
+    const newRef = row.querySelector(".edit-ref").value.trim();
+    await applyBookingCorrection(sku, chain, newQty, newRef);
+  }));
+
+  wrap.querySelectorAll(".btn-delete-chain").forEach(b => b.addEventListener("click", async () => {
+    const sku    = b.dataset.sku;
+    const chain  = b.dataset.chain;
+    const chains = (commitLog[sku] && commitLog[sku].chains) || [];
+    const c      = chains.find(x => x.chainId === chain);
+    const info   = c ? `${c.qty}× ${c.box ? "(" + c.box + ")" : "(ohne Box)"}` : "";
     if (!confirm(`Buchung wirklich löschen? ${info}\n\nDer Artikel wandert danach wieder in die offene Pickliste.`)) return;
-    await applyBookingCorrection(sku, uuid, 0, "");
+    await applyBookingCorrection(sku, chain, 0, "");
   }));
 }
 
-// Korrigiert eine bestehende Buchung, ohne das Backend zu verändern:
-// storniert die alte Buchung vollständig (COMMIT_UNDO) und legt bei
-// newQty > 0 sofort eine neue Buchung mit korrigierter Menge/Box nach
-// (COMMIT). newQty === 0 entspricht damit einem reinen Löschen. Dadurch
-// erscheint eine korrigierte Buchung in der Historie danach als neuer
-// Eintrag mit aktuellem Zeitstempel - technisch korrekt (nichts geht im
-// Log verloren), aber optisch "springt" sie an die erste Stelle.
-async function applyBookingCorrection(sku, uuid, newQty, newRef) {
-  const entry = (commitLog[sku] || []).find(e => e.uuid === uuid && !e.voided);
-  if (!entry) {
+// Korrigiert eine bestehende Buchungskette (Menge und/oder Box), indem eine
+// verknüpfte Korrektur-Zeile angehängt wird (ref_uuid = chainId) - die
+// Original-Buchung bleibt dabei unverändert in der Datenbank stehen, nur
+// die Differenz wird zusätzlich gebucht. newQty === 0 entspricht damit
+// einem vollständigen Löschen der Kette. Der Artikel wird kurzzeitig vor
+// dem automatischen Refresh geschützt (siehe touchSku), damit die
+// Korrektur nicht durch eine noch nicht aktualisierte Serverantwort
+// überschrieben wird.
+async function applyBookingCorrection(sku, chainId, newQty, newRef) {
+  const chains = (commitLog[sku] && commitLog[sku].chains) || [];
+  const chain  = chains.find(c => c.chainId === chainId);
+  if (!chain) {
     showNotification("Buchung nicht gefunden (evtl. bereits geändert oder noch nicht synchronisiert).", "err");
     return;
   }
-  const art   = artBySku[sku];
-  const oldQty = entry.qty;
+  const art     = artBySku[sku];
+  const oldQty  = chain.qty;
+  const oldBox  = chain.box;
+  const delta   = newQty - oldQty;
+  const boxChanged = newRef !== oldBox;
 
-  // Alte Buchung nicht entfernen, sondern als storniert kennzeichnen (bleibt
-  // in der Historie sichtbar, zählt aber nicht mehr zur Summe).
-  entry.voided = true;
-  entry.status = newQty > 0 ? "geändert" : "gelöscht";
-  committed[sku] = Math.max(0, (committed[sku] || 0) - oldQty);
-  await sendWebhook("COMMIT_UNDO", { sku, art, undoQty: oldQty });
+  touchSku(sku);
 
-  if (newQty > 0) {
-    const newUuid = genUUID();
-    committed[sku] = (committed[sku] || 0) + newQty;
-    commitLog[sku].push({ qty: newQty, ref: newRef, ts: new Date().toISOString(), user: currentUser, uuid: newUuid, status: "geändert", voided: false });
-    await sendWebhook("COMMIT", { sku, art, qty: newQty, ref: newRef, uuid: newUuid });
+  if (delta > 0) {
+    const uuid = genUUID();
+    await sendWebhook("COMMIT", { sku, art, qty: delta, ref: newRef, uuid, refUuid: chainId });
+    chain.events.push({ qty: delta, ref: newRef, ts: new Date().toISOString(), user: currentUser, uuid, aktion: "COMMIT" });
+  } else if (delta < 0) {
+    const uuid = genUUID();
+    await sendWebhook("COMMIT_UNDO", { sku, art, undoQty: -delta, refUuid: chainId, uuid });
+    chain.events.push({ qty: delta, ref: "", ts: new Date().toISOString(), user: currentUser, uuid, aktion: "COMMIT_UNDO" });
+    // Falls trotz Mengenreduzierung noch Restmenge bleibt und sich zusätzlich
+    // die Box geändert hat, die neue Box separat nachtragen (menge:0).
+    if (newQty > 0 && boxChanged) {
+      const uuid2 = genUUID();
+      await sendWebhook("COMMIT", { sku, art, qty: 0, ref: newRef, uuid: uuid2, refUuid: chainId });
+      chain.events.push({ qty: 0, ref: newRef, ts: new Date().toISOString(), user: currentUser, uuid: uuid2, aktion: "COMMIT" });
+    }
+  } else if (boxChanged) {
+    const uuid = genUUID();
+    await sendWebhook("COMMIT", { sku, art, qty: 0, ref: newRef, uuid, refUuid: chainId });
+    chain.events.push({ qty: 0, ref: newRef, ts: new Date().toISOString(), user: currentUser, uuid, aktion: "COMMIT" });
   }
 
+  // Lokalen Stand sofort widerspiegeln, ohne auf den nächsten Reload zu warten
+  chain.qty = newQty;
+  chain.box = newQty > 0 ? newRef : chain.box;
+  committed[sku] = Math.max(0, (committed[sku] || 0) + delta);
   if (committed[sku] === 0) delete committed[sku];
+  if (newQty === 0) {
+    commitLog[sku].chains = chains.filter(c => c.chainId !== chainId);
+  }
   if ((planned[sku] || 0) > 0 && (committed[sku] || 0) >= planned[sku]) commitDone[sku] = true;
   else delete commitDone[sku];
 
@@ -2265,7 +2282,7 @@ async function applyBookingCorrection(sku, uuid, newQty, newRef) {
       : `Buchung gelöscht: ${art?.name || sku} ist wieder offen`,
     "warn"
   );
-  renderWarehouse();
+  renderView();
 }
 
 // ── VERKAUF ───────────────────────────────────────────────────────────────
@@ -2443,14 +2460,19 @@ function sendWebhook(action, data) {
     case "PLAN_SET":     payload.qty = data.qty || 0; break;
     case "PLAN":         payload.qty = data.qty || 0; break;
     case "PLAN_ADJUST":  payload.diff = data.diff || 0; break;
-    case "COMMIT":       payload.qty = data.qty || 0; break;
-    case "COMMIT_UNDO":  payload.undoQty = data.undoQty || 0; break;
+    case "COMMIT":       payload.qty = data.qty || 0; payload.refUuid = data.refUuid || null; break;
+    case "COMMIT_UNDO":  payload.undoQty = data.undoQty || 0; payload.refUuid = data.refUuid || null; break;
     case "REMOVE":       payload.currentPlanned = data.currentPlanned || 0; break;
     case "SALE":
       payload.items    = data.items    || [];
       payload.listName = data.listName || "";
       break;
   }
+
+  // Betroffenen Artikel kurzzeitig vor dem automatischen Refresh schützen
+  // (siehe TOUCH_PROTECTION_MS) - BigQuery braucht nach einem Schreiben
+  // etwas Zeit, bis eine erneute Abfrage die Änderung sieht.
+  if (action === "COMMIT" || action === "COMMIT_UNDO") touchSku(sku);
 
   // Mengenänderungen am selben Artikel werden gebündelt (debounced),
   // alles andere (COMMIT, SALE etc.) geht sofort in die Queue
