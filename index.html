@@ -995,10 +995,20 @@ async function loadRemoteState(silent = false) {
   }
 }
 
-// Auto-Refresh alle 30 Sekunden
+// Auto-Refresh alle 30 Sekunden - überspringt einen Zyklus, solange gerade
+// ein Eingabefeld fokussiert ist. Ohne diese Schutzklausel würde der
+// vollständige innerHTML-Rebuild in renderView() jede noch nicht
+// gespeicherte Eingabe (z.B. in der Messepreise-Ansicht) mitten im Tippen
+// löschen, weil die Felder aus dem zuletzt gespeicherten Zustand neu
+// befüllt werden, nicht aus dem aktuellen DOM-Wert.
 function startAutoRefresh() {
   stopAutoRefresh();
-  refreshTimer = setInterval(() => loadRemoteState(true), AUTO_REFRESH_MS);
+  refreshTimer = setInterval(() => {
+    const active = document.activeElement;
+    const isEditing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+    if (isEditing) return;
+    loadRemoteState(true);
+  }, AUTO_REFRESH_MS);
 }
 function stopAutoRefresh() {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
