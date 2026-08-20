@@ -479,6 +479,34 @@ function applyMesseTheme(name) {
   btn.style.color = c.fg;
 }
 
+// Holt beide Quellen und führt sie zusammen: Farbkonfiguration (Supervisor-
+// gepflegt) zuerst, danach "verwaiste" Messen mit Buchungsdaten in BigQuery,
+// die (noch) nicht in der Konfiguration stehen - z.B. weil sie vor dieser
+// Erweiterung angelegt wurden (wie "Interdive 2026"). Wird sowohl vom
+// Auswahl-Dialog als auch von "Messen verwalten" in den Einstellungen
+// genutzt, damit eine bereits aktive Messe in BEIDEN Stellen auftaucht und
+// nicht nur auswählbar, sondern auch nachträglich einfärbbar ist.
+async function fetchMergedMessenList() {
+  await loadMessenConfig();
+  let bqMessen = [];
+  if (WEBHOOK_URL) {
+    try {
+      const resp = await fetch(authUrl(WEBHOOK_URL + "?action=messen"));
+      const json = await resp.json();
+      bqMessen = json.messen || [];
+    } catch(e) { console.warn("fetchMergedMessenList:", e); }
+  }
+  const seen = new Set();
+  const merged = [];
+  messenConfig.forEach(m => { merged.push({ name: m.name, bg: m.bg, fg: m.fg, erstellt: null }); seen.add(m.name); });
+  bqMessen.forEach(m => {
+    if (seen.has(m.name)) return;
+    merged.push({ name: m.name, bg: "#185fa5", fg: "#ffffff", erstellt: m.erstellt });
+    seen.add(m.name);
+  });
+  return merged;
+}
+
 // ── MESSE-DIALOG ──────────────────────────────────────────────────────────
 async function showMesseDialog() {
   const dialog     = qs("#messe-dialog");
@@ -490,24 +518,7 @@ async function showMesseDialog() {
 
   try {
     if (WEBHOOK_URL) {
-      await loadMessenConfig();
-      const resp = await fetch(authUrl(WEBHOOK_URL + "?action=messen"));
-      const json = await resp.json();
-      const bqMessen = json.messen || [];
-
-      // Merge: konfigurierte Messen zuerst (bewusste Supervisor-Reihenfolge),
-      // danach "verwaiste" Messen mit Buchungsdaten, die (noch) nicht in der
-      // Konfiguration stehen - z.B. weil sie vor dieser Erweiterung angelegt
-      // wurden. So geht keine bestehende Messe verloren, bekommt aber erst
-      // nach Pflege durch den Supervisor eine eigene Farbe.
-      const seen = new Set();
-      const merged = [];
-      messenConfig.forEach(m => { merged.push({ name: m.name, bg: m.bg, fg: m.fg, erstellt: null }); seen.add(m.name); });
-      bqMessen.forEach(m => {
-        if (seen.has(m.name)) return;
-        merged.push({ name: m.name, bg: "#185fa5", fg: "#ffffff", erstellt: m.erstellt });
-        seen.add(m.name);
-      });
+      const merged = await fetchMergedMessenList();
 
       if (merged.length === 0) {
         listEl.innerHTML = `<div class="muted" style="text-align:center;font-size:13px;">Noch keine Messen vorhanden.${getAuthRole() === "supervisor" ? " Lege unten eine an." : " Bitte den Supervisor, eine Messe anzulegen."}</div>`;
@@ -559,14 +570,15 @@ qs("#btn-manage-messen").addEventListener("click", () => {
 });
 
 // ── MESSEN-KONFIGURATION IN DEN EINSTELLUNGEN (nur Supervisor) ───────────
-function renderMessenConfigRows() {
+// list: Ergebnis von fetchMergedMessenList() - enthält auch bereits aktive
+// Messen ohne eigene Farbe (Default-Blau), damit der Supervisor sie hier
+// direkt nachträglich einfärben/übernehmen kann, statt sie neu abtippen
+// zu müssen.
+function renderMessenConfigRows(list) {
   const wrap = qs("#messen-config-list");
   wrap.innerHTML = "";
-  if (messenConfig.length === 0) {
-    addMesseConfigRow({ name: "", bg: "#185fa5", fg: "#ffffff" });
-  } else {
-    messenConfig.forEach(m => addMesseConfigRow(m));
-  }
+  const rows = (list && list.length) ? list : [{ name: "", bg: "#185fa5", fg: "#ffffff" }];
+  rows.forEach(m => addMesseConfigRow(m));
 }
 
 function addMesseConfigRow(data) {
@@ -623,8 +635,8 @@ async function openSettingsToMessen() {
     qs("#settings-pins").style.display = "block";
     qs("#settings-messen").style.display = "block";
     loadPinStatus();
-    await loadMessenConfig();
-    renderMessenConfigRows();
+    const merged = await fetchMergedMessenList();
+    renderMessenConfigRows(merged);
   }
   qs("#settings-messen")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -2927,8 +2939,8 @@ qs("#btn-settings").addEventListener("click", async () => {
       qs("#settings-pins").style.display = "block";
       qs("#settings-messen").style.display = "block";
       loadPinStatus();
-      await loadMessenConfig();
-      renderMessenConfigRows();
+      const merged = await fetchMergedMessenList();
+      renderMessenConfigRows(merged);
     } else {
       qs("#settings-pins").style.display = "none";
       qs("#settings-messen").style.display = "none";
