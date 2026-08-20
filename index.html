@@ -141,6 +141,11 @@
       #wh-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;align-items:start;}
       #wh-items .card{margin-bottom:0;}
 
+      /* Preisliste (Verkauf) ebenfalls als Grid, analog Vorbereitung */
+      #preisliste-results{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;align-items:start;}
+      #preisliste-results > .muted{grid-column:1/-1;}
+      #preisliste-results .card{margin-bottom:0;}
+
       /* Varianten in der Detailansicht (Vorbereitung) als Grid */
       #detail-slaves{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;}
       #detail-slaves .slave-card{margin-bottom:0;margin-left:0;}
@@ -157,6 +162,7 @@
     @media(min-width:1200px){
       #prep-results{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));}
       #wh-items{grid-template-columns:repeat(auto-fill,minmax(360px,1fr));}
+      #preisliste-results{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));}
       .merkliste-group-wrap{grid-template-columns:repeat(auto-fill,minmax(360px,1fr));}
     }
 
@@ -375,7 +381,7 @@ let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut
 let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbzr3xCsE3xCIQGsma8ArLN7Ae7MOO3Z3GFrQ_D4bbyqu2sCJkyZkuDfJk9F638cP4hz_g/exec"; // Zentrale Webhook-URL
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbyueipj90Lx825Nit7x9EyyCujCvism40gFhHhEXXhlOgm8pyHtMuJy6adqUUbv1IYYnw/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
@@ -2931,7 +2937,7 @@ function renderSales() {
 
   const subTabs = document.createElement("div");
   subTabs.style.cssText = "display:flex;gap:4px;border-bottom:0.5px solid var(--border);margin-bottom:12px;";
-  [["listen", "Verkaufslisten"], ["preisliste", "Preisliste"]].forEach(([key, label]) => {
+  [["preisliste", "Preisliste"], ["listen", "Verkaufslisten"]].forEach(([key, label]) => {
     const b = document.createElement("button");
     b.className = "sales-subtab";
     const active = salesSubView === key;
