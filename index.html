@@ -68,7 +68,7 @@
     .notif-warn{background:var(--warn-bg);color:var(--warn);}
     .notif-err{background:var(--err-bg);color:var(--err);}
     #settings-panel{display:none;padding:12px 16px;border-bottom:0.5px solid var(--border);background:var(--bg2);}
-    #view-prep,#view-merkliste,#view-warehouse,#view-sales{display:none;}
+    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-sales{display:none;}
     /* Lade-Overlay */
     #loading-overlay{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;}
     #loading-overlay.hidden{display:none;}
@@ -336,6 +336,7 @@
   <div class="tabs" style="margin-top:10px;">
     <button class="tab active" data-tab="prep" data-roles="supervisor,planer"><i class="ti ti-clipboard-list"></i>Vorbereitung</button>
     <button class="tab" data-tab="merkliste" data-roles="supervisor,planer"><i class="ti ti-star"></i>Merkliste</button>
+    <button class="tab" data-tab="preise" data-roles="supervisor,planer"><i class="ti ti-currency-euro"></i>Messepreise</button>
     <button class="tab" data-tab="warehouse" data-roles="supervisor,planer,kommission"><i class="ti ti-packages"></i>Kommission</button>
     <button class="tab" data-tab="sales" data-roles="supervisor,planer,verkauf"><i class="ti ti-shopping-cart"></i>Verkauf</button>
   </div>
@@ -345,6 +346,7 @@
   <div class="content-wrap" style="padding:12px 16px;">
     <div id="view-prep"></div>
     <div id="view-merkliste"></div>
+    <div id="view-preise"></div>
     <div id="view-warehouse"></div>
     <div id="view-sales"></div>
   </div>
@@ -373,7 +375,7 @@ let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut
 let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbxNZO3qqW4hxNaLmNURzJ4sv20AAbC-jiLKZxXamhJLnsBLER5djAhwBHPOqgSo20RRrw/exec"; // Zentrale Webhook-URL
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbwGyXrYlLZ02_2pEV0PCJHGZCd4XU9h5lU3bhedFkf2nnadK52c-NPZBmey-5QcKRndsg/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
@@ -386,8 +388,8 @@ let messenConfig = [];
 // überlebt einen normalen Reload innerhalb desselben Tabs/derselben
 // PWA-Instanz, verlangt aber bei echtem Neustart/neuem Tab erneutes Login.
 const TAB_PERMISSIONS = {
-  supervisor: ["prep", "merkliste", "warehouse", "sales"],
-  planer:     ["prep", "merkliste", "warehouse", "sales"],
+  supervisor: ["prep", "merkliste", "preise", "warehouse", "sales"],
+  planer:     ["prep", "merkliste", "preise", "warehouse", "sales"],
   kommission: ["warehouse"],
   verkauf:    ["sales"],
 };
@@ -427,6 +429,11 @@ let planned    = {};
 let committed  = {};
 let commitLog  = {};
 let commitDone = {};
+let preise     = {}; // { sku: { min, messe } } - Messemindestpreis / Messepreis, ganze Euro
+let preisSearch    = "";
+let preisLieferant = "";
+let preisKategorie = "";
+let preisNurOhne   = false; // Checkbox "nur Artikel ohne hinterlegten Messepreis" - Default: aus, wie in der Vorbereitung
 let salesLists = [];
 let activeSales= null;
 
@@ -555,7 +562,7 @@ async function selectMesse(name) {
   qs("#messe-dialog").style.display = "none";
   applyMesseTheme(name);
   saveUIState();
-  planned = {}; committed = {}; commitLog = {}; commitDone = {};
+  planned = {}; committed = {}; commitLog = {}; commitDone = {}; preise = {};
   showNotification(`Messe "${name}" ausgewählt`, "ok");
   await loadRemoteState(false);
   startAutoRefresh();
@@ -963,6 +970,22 @@ async function loadRemoteState(silent = false) {
     Object.keys(planned).forEach(sku => {
       if ((committed[sku] || 0) >= planned[sku]) commitDone[sku] = true;
     });
+
+    // Preise analog committed mergen: lokal kürzlich gespeicherte Preise
+    // (touchSku) nicht durch einen noch nicht aktualisierten Server-Stand
+    // überschreiben lassen (gleiches BigQuery-Streaming-Zeitfenster wie bei
+    // Kommissionierungen).
+    const serverPreise = s.preise || {};
+    const mergedPreise = {};
+    const allPreisSkus = new Set([...Object.keys(serverPreise), ...Object.keys(preise)]);
+    allPreisSkus.forEach(sku => {
+      if (isProtected(sku) || serverPreise[sku] === undefined) {
+        if (preise[sku] !== undefined) mergedPreise[sku] = preise[sku];
+      } else {
+        mergedPreise[sku] = serverPreise[sku];
+      }
+    });
+    preise = mergedPreise;
 
     if (!silent) showNotification("Stand aktualisiert");
     renderView();
@@ -1379,11 +1402,12 @@ function parseCSV(text) {
 
 // ── VIEWS ─────────────────────────────────────────────────────────────────
 function renderView() {
-  ["prep","merkliste","warehouse","sales"].forEach(v => qs(`#view-${v}`).style.display = "none");
+  ["prep","merkliste","preise","warehouse","sales"].forEach(v => qs(`#view-${v}`).style.display = "none");
   qs(`#view-${currentView}`).style.display = "block";
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === currentView));
   if (currentView === "prep")       renderPrep();
   if (currentView === "merkliste")  renderMerklisteView();
+  if (currentView === "preise")     renderPreise();
   if (currentView === "warehouse")  renderWarehouse();
   if (currentView === "sales")      renderSales();
 }
@@ -1764,6 +1788,278 @@ function _renderSlaveRow(container, slave, isPlanned) {
 
   row.appendChild(bottomRow);
   container.appendChild(row);
+}
+
+// ── MESSEPREISE (eigener Tab, nur Supervisor/Planer) ──────────────────────
+// Speichert Mindestpreis/Messepreis für eine SKU: optimistisches lokales
+// Update + Touch-Schutz (siehe loadRemoteState) + Sync-Queue-Eintrag.
+async function savePreis(sku, art, minVal, messeVal) {
+  preise[sku] = { min: minVal, messe: messeVal };
+  touchSku(sku);
+  await sendWebhook("PREIS_SET", { sku, art, minPrice: minVal, messePrice: messeVal });
+}
+
+function hatVollstaendigenPreis(sku) {
+  const p = preise[sku];
+  return !!(p && p.min > 0 && p.messe > 0);
+}
+
+function renderPreise() {
+  const wrap = qs("#view-preise");
+
+  // Alle für die Messe geplanten Nicht-Master-Artikel (analog Merkliste)
+  const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
+
+  if (geplant.length === 0) {
+    wrap.innerHTML = `<div class="muted" style="text-align:center;padding:32px 0;">
+      <i class="ti ti-currency-euro" style="font-size:36px;display:block;margin-bottom:10px;opacity:.4;"></i>
+      Noch keine Artikel geplant.<br>
+      <span style="font-size:12px;">Artikel in der Vorbereitung suchen und Menge setzen.</span>
+    </div>`;
+    return;
+  }
+
+  // EK/UVP/Akt. VK nachladen, falls noch nicht bekannt
+  ensureDetailsLoaded(geplant.map(a => a.sku), () => renderPreise());
+
+  const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
+  const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
+
+  wrap.innerHTML = `
+    <div class="filter-bar">
+      <div class="search-bar" style="margin-bottom:8px;">
+        <i class="ti ti-search"></i>
+        <input type="text" id="preis-search" placeholder="Name, SKU oder EAN …" value="${preisSearch}" />
+      </div>
+      <div class="ac-wrap">
+        <input type="text" id="preis-lieferant" placeholder="Lieferant / Hersteller …" value="${preisLieferant}" />
+        <div class="ac-dropdown" id="ac-preis-lieferant" style="display:none;"></div>
+      </div>
+      <div class="ac-wrap">
+        <input type="text" id="preis-kategorie" placeholder="Kategorie …" value="${preisKategorie}" />
+        <div class="ac-dropdown" id="ac-preis-kategorie" style="display:none;"></div>
+      </div>
+      <label class="filter-toggle" style="margin-top:4px;">
+        <input type="checkbox" id="preis-nur-ohne" ${preisNurOhne ? "checked" : ""} />
+        Nur Artikel ohne hinterlegten Messepreis
+      </label>
+    </div>
+    <div id="preis-results"></div>
+  `;
+
+  makeAutocomplete(qs("#preis-lieferant"), qs("#ac-preis-lieferant"), () => allLieferanten, val => {
+    preisLieferant = val; runPreisSearch();
+  });
+  makeAutocomplete(qs("#preis-kategorie"), qs("#ac-preis-kategorie"), () => allKategorien, val => {
+    preisKategorie = val; runPreisSearch();
+  });
+  qs("#preis-search").addEventListener("input", e => { preisSearch = e.target.value; runPreisSearch(); });
+  qs("#preis-lieferant").addEventListener("input", e => { preisLieferant = e.target.value; runPreisSearch(); });
+  qs("#preis-kategorie").addEventListener("input", e => { preisKategorie = e.target.value; runPreisSearch(); });
+  qs("#preis-nur-ohne").addEventListener("change", e => { preisNurOhne = e.target.checked; runPreisSearch(); });
+
+  runPreisSearch();
+}
+
+function runPreisSearch() {
+  const resultsEl = qs("#preis-results");
+  if (!resultsEl) return;
+
+  const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
+
+  const sq = preisSearch.trim().toLowerCase();
+  const sl = preisLieferant.trim().toLowerCase();
+  const sk = preisKategorie.trim().toLowerCase();
+
+  const filtered = geplant.filter(a => {
+    if (sl && !(a.supplier||"").toLowerCase().includes(sl)) return false;
+    if (sk && !(a.category||"").toLowerCase().includes(sk)) return false;
+    if (sq) {
+      const tokens = sq.split(/\s+/).filter(Boolean);
+      const haystack = (a.name + " " + a.sku + " " + (a.ean||"")).toLowerCase();
+      if (!tokens.every(t => haystack.includes(t))) return false;
+    }
+    if (preisNurOhne && hatVollstaendigenPreis(a.sku)) return false;
+    return true;
+  });
+
+  resultsEl.innerHTML = "";
+
+  if (filtered.length === 0) {
+    resultsEl.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;">Keine Artikel gefunden.</div>`;
+    return;
+  }
+
+  const info = document.createElement("div");
+  info.className = "muted";
+  info.style.cssText = "font-size:12px;margin-bottom:10px;";
+  info.textContent = `${filtered.length} Artikel`;
+  resultsEl.appendChild(info);
+
+  // Nach Master gruppieren, damit "für alle Varianten übernehmen" möglich ist
+  const masterGroups = {};
+  filtered.forEach(slave => {
+    const master = getMasterOf(slave);
+    const key = master ? master.sku : `__solo__${slave.sku}`;
+    if (!masterGroups[key]) masterGroups[key] = { master, slaves: [] };
+    masterGroups[key].slaves.push(slave);
+  });
+
+  const groupKeys = Object.keys(masterGroups).sort((a, b) => {
+    const na = masterGroups[a].master ? masterGroups[a].master.name : (masterGroups[a].slaves[0]?.name || "");
+    const nb = masterGroups[b].master ? masterGroups[b].master.name : (masterGroups[b].slaves[0]?.name || "");
+    return na.localeCompare(nb, "de");
+  });
+
+  groupKeys.forEach(key => {
+    const { master, slaves } = masterGroups[key];
+    _renderPreisGroup(resultsEl, master, slaves);
+  });
+}
+
+function _renderPreisGroup(wrap, master, slaves) {
+  const isGrouped = !!master;
+  const card = document.createElement("div");
+  card.className = "card";
+
+  if (isGrouped) {
+    const missing = slaves.filter(a => !hatVollstaendigenPreis(a.sku)).length;
+    const hdr = document.createElement("div");
+    hdr.style.cssText = "display:flex;gap:10px;align-items:flex-start;margin-bottom:12px;";
+    hdr.innerHTML = `
+      ${imgTag(master, 44)}
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:500;">${master.name}</div>
+        <div class="muted" style="margin-top:2px;">${missing > 0 ? missing + " von " + slaves.length + " ohne Preis" : "alle Varianten mit Preis"}</div>
+      </div>`;
+    card.appendChild(hdr);
+
+    // Sammel-Eingabe: gilt für alle Varianten dieser Master-Gruppe
+    const bulkWrap = document.createElement("div");
+    bulkWrap.style.cssText = "background:var(--bg2);border-radius:var(--r);padding:10px;margin-bottom:14px;";
+    bulkWrap.innerHTML = `
+      <div style="font-size:12px;font-weight:500;margin-bottom:8px;">Preis für alle Varianten übernehmen</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <div style="flex:1;">
+          <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Mindestpreis (ganze €)</label>
+          <input type="number" step="1" min="0" class="bulk-min-inp" style="width:100%;" />
+        </div>
+        <div style="flex:1;">
+          <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Messepreis (ganze €)</label>
+          <input type="number" step="1" min="0" class="bulk-messe-inp" style="width:100%;" />
+        </div>
+      </div>
+      <button class="btn btn-info btn-bulk-apply" style="width:100%;justify-content:center;">
+        <i class="ti ti-copy"></i> Für alle Varianten übernehmen
+      </button>`;
+    card.appendChild(bulkWrap);
+
+    bulkWrap.querySelector(".btn-bulk-apply").addEventListener("click", async () => {
+      const minVal   = Math.max(0, parseInt(bulkWrap.querySelector(".bulk-min-inp").value) || 0);
+      const messeVal = Math.max(0, parseInt(bulkWrap.querySelector(".bulk-messe-inp").value) || 0);
+      if (minVal <= 0 && messeVal <= 0) {
+        showNotification("Bitte mindestens einen Preis eingeben.", "warn");
+        return;
+      }
+      const mitVorhandenem = slaves.filter(a => preise[a.sku] && (preise[a.sku].min > 0 || preise[a.sku].messe > 0));
+      let ueberschreiben = true;
+      if (mitVorhandenem.length > 0) {
+        ueberschreiben = confirm(
+          `${mitVorhandenem.length} von ${slaves.length} Varianten haben bereits einen Preis.\n\n` +
+          `OK = ALLE Varianten überschreiben (auch die mit vorhandenem Preis).\n` +
+          `Abbrechen = NUR die Varianten OHNE Preis füllen, vorhandene Preise bleiben unverändert.`
+        );
+      }
+      const ziel = ueberschreiben ? slaves : slaves.filter(a => !(preise[a.sku] && (preise[a.sku].min > 0 || preise[a.sku].messe > 0)));
+      for (const art of ziel) {
+        await savePreis(art.sku, art, minVal, messeVal);
+      }
+      showNotification(`${ziel.length} Variante(n) aktualisiert`, "ok");
+      renderPreise();
+    });
+
+    const subHdr = document.createElement("div");
+    subHdr.className = "muted";
+    subHdr.style.cssText = "font-size:11px;margin-bottom:8px;";
+    subHdr.textContent = "Varianten (einzeln überschreibbar)";
+    card.appendChild(subHdr);
+  }
+
+  slaves.sort((a, b) => a.name.localeCompare(b.name, "de")).forEach((slave, i) => {
+    card.appendChild(_buildPreisSlaveRow(slave, isGrouped && i > 0));
+  });
+
+  wrap.appendChild(card);
+}
+
+function _buildPreisSlaveRow(slave, withTopBorder) {
+  const sku    = slave.sku;
+  const p      = preise[sku] || {};
+  const loaded = slave._detailLoaded;
+  const ek     = loaded ? Number(slave.costPrice) || 0 : 0;
+
+  const row = document.createElement("div");
+  row.dataset.sku = sku;
+  row.style.cssText = withTopBorder ? "border-top:0.5px solid var(--border);padding-top:12px;margin-top:12px;" : "";
+
+  const calcHTML = (!loaded) ? `<div class="muted" style="font-size:11px;opacity:.6;padding:4px 0;">Kalkulationsgrundlage wird geladen…</div>` : (() => {
+    const markups = [10, 20, 30, 40, 50];
+    return `<div style="border:0.5px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:10px;">
+      ${markups.map((m, idx) => {
+        const val = Math.round(ek * (1 + m / 100) * 1.19);
+        return `<div style="display:grid;grid-template-columns:1fr 1fr;padding:5px 10px;font-size:12px;${idx < markups.length - 1 ? "border-bottom:0.5px solid var(--border);" : ""}${idx % 2 === 1 ? "background:var(--bg2);" : ""}">
+          <span class="muted">${m} %</span><span style="text-align:right;">${val} €</span>
+        </div>`;
+      }).join("")}
+    </div>`;
+  })();
+
+  row.innerHTML = `
+    <div style="font-size:13px;font-weight:500;margin-bottom:2px;">${slave.name}</div>
+    <div class="muted" style="margin-bottom:10px;">${skuEanHTML(slave.sku, slave.ean)}</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;">
+      <div style="background:var(--bg2);border-radius:var(--r);padding:6px 8px;">
+        <div class="muted" style="font-size:11px;">EK</div>
+        <div style="font-size:14px;font-weight:500;">${loaded ? Math.round(ek) + " €" : "…"}</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--r);padding:6px 8px;">
+        <div class="muted" style="font-size:11px;">UVP</div>
+        <div style="font-size:14px;font-weight:500;">${loaded ? Math.round(slave.uvp) + " €" : "…"}</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--r);padding:6px 8px;">
+        <div class="muted" style="font-size:11px;">Akt. VK</div>
+        <div style="font-size:14px;font-weight:500;">${loaded ? Math.round(slave.price) + " €" : "…"}</div>
+      </div>
+    </div>
+    <div class="muted" style="font-size:11px;margin-bottom:4px;">Kalkulation: EK × (1 + Aufschlag) × 1,19, auf ganze € gerundet</div>
+    ${calcHTML}
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <div style="flex:1;">
+        <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Mindestpreis</label>
+        <input type="number" step="1" min="0" class="preis-min-inp" value="${p.min || ""}" style="width:100%;" />
+      </div>
+      <div style="flex:1;">
+        <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Messepreis</label>
+        <input type="number" step="1" min="0" class="preis-messe-inp" value="${p.messe || ""}" style="width:100%;" />
+      </div>
+    </div>
+    <button class="btn btn-ok btn-save-preis" style="width:100%;justify-content:center;">
+      <i class="ti ti-device-floppy"></i> Speichern
+    </button>`;
+
+  row.querySelector(".btn-save-preis").addEventListener("click", async () => {
+    const minVal   = Math.max(0, parseInt(row.querySelector(".preis-min-inp").value) || 0);
+    const messeVal = Math.max(0, parseInt(row.querySelector(".preis-messe-inp").value) || 0);
+    if (minVal <= 0 && messeVal <= 0) {
+      showNotification("Bitte mindestens einen Preis eingeben.", "warn");
+      return;
+    }
+    await savePreis(sku, slave, minVal, messeVal);
+    showNotification(`Preis für ${slave.name} gespeichert`, "ok");
+    renderPreise();
+  });
+
+  return row;
 }
 
 // ── GETEILTE DETAILANSICHT (Prep + Merkliste nutzen dieselbe Funktion) ─────
@@ -2767,6 +3063,7 @@ function sendWebhook(action, data) {
     case "COMMIT":       payload.qty = data.qty || 0; payload.refUuid = data.refUuid || null; break;
     case "COMMIT_UNDO":  payload.undoQty = data.undoQty || 0; payload.refUuid = data.refUuid || null; break;
     case "REMOVE":       payload.currentPlanned = data.currentPlanned || 0; break;
+    case "PREIS_SET":    payload.minPrice = data.minPrice || 0; payload.messePrice = data.messePrice || 0; break;
     case "SALE":
       payload.items    = data.items    || [];
       payload.listName = data.listName || "";
