@@ -205,11 +205,13 @@
       <div style="font-weight:600;font-size:16px;margin-bottom:4px;">Messe auswählen</div>
       <div class="muted" style="font-size:13px;margin-bottom:16px;">Wähle eine bestehende Messe oder lege eine neue an.</div>
       <div id="messe-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;"></div>
-      <div style="border-top:0.5px solid var(--border);padding-top:16px;">
-        <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Neue Messe anlegen</div>
-        <input type="text" id="inp-neue-messe" placeholder="z.B. Boot Düsseldorf 2027" style="margin-bottom:8px;" />
-        <button id="btn-neue-messe" class="btn btn-info" style="width:100%;">
-          <i class="ti ti-plus"></i> Messe anlegen
+      <!-- Messen anlegen/umbenennen geht seit v9 nur noch über die
+           Einstellungen (Supervisor) - inkl. Farbdefinition. So entsteht
+           nie mehr eine Messe ohne Farbzuordnung, und die Liste bleibt
+           unter Kontrolle einer Person statt "jeder tippt mal einen Namen". -->
+      <div id="messe-dialog-manage" style="display:none;border-top:0.5px solid var(--border);padding-top:16px;">
+        <button id="btn-manage-messen" class="btn btn-info" style="width:100%;">
+          <i class="ti ti-settings"></i> Messen verwalten (Einstellungen)
         </button>
       </div>
     </div>
@@ -251,25 +253,30 @@
     </div>
   </div>
 
-  <!-- Aktuelle Messe prominent unter dem Header -->
-  <div style="padding:6px 16px 0;display:flex;align-items:center;justify-content:space-between;">
-    <button id="btn-switch-messe" style="background:var(--info);color:#fff;border:none;border-radius:20px;padding:4px 12px;font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;">
-      <i class="ti ti-calendar-event" style="font-size:13px;"></i>
-      <span id="messe-label-display">Keine Messe ausgewählt</span>
-      <i class="ti ti-chevron-down" style="font-size:11px;opacity:.7;"></i>
+  <!-- Aktuelle Messe deutlich hervorgehoben: volle Breite, große Schrift,
+       Farbe kommt aus der (optionalen) Supervisor-Konfiguration - siehe
+       applyMesseTheme(). Ohne Konfiguration Standardfarbe (var(--info)/weiß),
+       damit bestehende Messen ohne Farbeintrag nicht "kaputt" aussehen. -->
+  <div style="padding:8px 16px 0;">
+    <button id="btn-switch-messe" style="width:100%;background:var(--info);color:#fff;border:none;border-radius:14px;padding:12px 16px;font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span style="display:flex;align-items:center;gap:9px;min-width:0;overflow:hidden;">
+        <i class="ti ti-calendar-event" style="font-size:17px;flex-shrink:0;"></i>
+        <span id="messe-label-display" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Keine Messe ausgewählt</span>
+      </span>
+      <i class="ti ti-chevron-down" style="font-size:13px;opacity:.85;flex-shrink:0;"></i>
     </button>
-    <span id="sync-status" style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--ok);">
-      <i class="ti ti-cloud-check" style="font-size:13px;"></i> Synchron
-    </span>
   </div>
 
-  <!-- Aktueller Benutzer, direkt unter der Messe-Zeile. Klick = Name ändern. -->
-  <div style="padding:5px 16px 0;">
+  <!-- Benutzer (links) + Sync-Status (rechts), unter dem Messe-Banner -->
+  <div style="padding:6px 16px 0;display:flex;align-items:center;justify-content:space-between;">
     <button id="btn-change-user" style="background:none;border:none;padding:0;display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);cursor:pointer;">
       <i class="ti ti-user-circle" style="font-size:14px;"></i>
       <span id="current-user-display">–</span>
       <i class="ti ti-pencil" style="font-size:10px;opacity:.6;"></i>
     </button>
+    <span id="sync-status" style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--ok);">
+      <i class="ti ti-cloud-check" style="font-size:13px;"></i> Synchron
+    </span>
   </div>
 
   <div id="settings-panel">
@@ -310,6 +317,19 @@
         <i class="ti ti-device-floppy"></i> PINs speichern
       </button>
       <div id="pins-status" style="margin-top:6px;font-size:12px;"></div>
+    </div>
+
+    <div id="settings-messen" style="display:none;margin-top:14px;padding-top:14px;border-top:0.5px solid var(--border);">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Messen verwalten</div>
+      <div class="muted" style="font-size:11px;margin-bottom:10px;">Nur Supervisor kann Messen anlegen/umbenennen. Farbe wird bei Auswahl der Messe im ganzen Tool als Hervorhebung verwendet.</div>
+      <div id="messen-config-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
+      <button id="btn-add-messe-row" class="btn" style="width:100%;margin-bottom:10px;">
+        <i class="ti ti-plus"></i> Weitere Messe
+      </button>
+      <button id="btn-save-messen-config" class="btn btn-info" style="width:100%;">
+        <i class="ti ti-device-floppy"></i> Messen speichern
+      </button>
+      <div id="messen-config-status" style="margin-top:6px;font-size:12px;"></div>
     </div>
   </div>
 
@@ -353,10 +373,13 @@ let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut
 let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbxZ4aPz3ekMS3DV5uS9b2bKJVEBUhK2pX4yCD97ic0j2DqYj95ZNXG-5eq0XH21aQQwoA/exec"; // Zentrale Webhook-URL
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbxNZO3qqW4hxNaLmNURzJ4sv20AAbC-jiLKZxXamhJLnsBLER5djAhwBHPOqgSo20RRrw/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
+// Vom Supervisor gepflegte Messen-Konfiguration (Name + Farben), vom
+// Server geladen - siehe loadMessenConfig()/applyMesseTheme().
+let messenConfig = [];
 
 // ── AUTH (Rollen & PIN-Login) ───────────────────────────────────────────
 // Token+Rolle liegen bewusst in sessionStorage (nicht localStorage):
@@ -412,11 +435,11 @@ let activeSales= null;
 // auch den Vorschlagswert für Menge (verfügbarer Bestand dort) und den
 // Box-Nummer-Präfix.
 const PICKORTE = [
-  { key: "zl", label: "Zentrallager", prefix: "ZL-" },
-  { key: "co", label: "Coppi",        prefix: "CO-" },
-  { key: "st", label: "Steglitz",     prefix: "ST-" },
-  { key: "fb", label: "Freiburg",     prefix: "FB-" },
-  { key: "hh", label: "Hamburg",      prefix: "HH-" },
+  { key: "zl", label: "Zentrallager", prefix: "ZL-", link: "https://www.wassersport-logistics.de/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
+  { key: "co", label: "Coppi",        prefix: "CO-", link: "https://www.atlantis-coppi.de/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
+  { key: "st", label: "Steglitz",     prefix: "ST-", link: "https://www.atlantis-steglitz.de/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
+  { key: "fb", label: "Freiburg",     prefix: "FB-", link: "https://www.tauchcenter-freiburg.de/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
+  { key: "hh", label: "Hamburg",      prefix: "HH-", link: "https://www.atlantis-tauchshop.hamburg/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
 ];
 let whPickort = ""; // "" = noch nicht gewählt
 
@@ -431,30 +454,78 @@ let whHistorySearch = "";
 
 let refreshTimer = null;
 
+// ── MESSEN-FARBKONFIGURATION (Supervisor-verwaltet, seit v9) ──────────────
+async function loadMessenConfig() {
+  if (!WEBHOOK_URL || !getAuthToken()) return;
+  try {
+    const resp = await fetch(authUrl(WEBHOOK_URL + "?action=messen_config_get"));
+    const json = await resp.json();
+    if (json.ok) messenConfig = json.config || [];
+  } catch(e) { console.warn("loadMessenConfig:", e); }
+}
+
+function getMesseColors(name) {
+  const found = messenConfig.find(m => m.name === name);
+  return found ? { bg: found.bg, fg: found.fg } : { bg: "#185fa5", fg: "#ffffff" };
+}
+
+// Färbt das Messe-Banner gemäß Konfiguration (oder Standardfarbe, falls
+// für diese Messe keine hinterlegt ist - z.B. weil sie vor v9 angelegt wurde).
+function applyMesseTheme(name) {
+  const btn = qs("#btn-switch-messe");
+  if (!btn) return;
+  const c = getMesseColors(name);
+  btn.style.background = c.bg;
+  btn.style.color = c.fg;
+}
+
 // ── MESSE-DIALOG ──────────────────────────────────────────────────────────
 async function showMesseDialog() {
-  const dialog  = qs("#messe-dialog");
-  const listEl  = qs("#messe-list");
+  const dialog     = qs("#messe-dialog");
+  const listEl     = qs("#messe-list");
+  const manageWrap = qs("#messe-dialog-manage");
   dialog.style.display = "flex";
   listEl.innerHTML = `<div class="muted" style="text-align:center;padding:12px;">Lade Messen…</div>`;
+  manageWrap.style.display = getAuthRole() === "supervisor" ? "block" : "none";
 
   try {
     if (WEBHOOK_URL) {
+      await loadMessenConfig();
       const resp = await fetch(authUrl(WEBHOOK_URL + "?action=messen"));
       const json = await resp.json();
-      const messen = json.messen || [];
+      const bqMessen = json.messen || [];
 
-      if (messen.length === 0) {
-        listEl.innerHTML = `<div class="muted" style="text-align:center;font-size:13px;">Noch keine Messen vorhanden.</div>`;
+      // Merge: konfigurierte Messen zuerst (bewusste Supervisor-Reihenfolge),
+      // danach "verwaiste" Messen mit Buchungsdaten, die (noch) nicht in der
+      // Konfiguration stehen - z.B. weil sie vor dieser Erweiterung angelegt
+      // wurden. So geht keine bestehende Messe verloren, bekommt aber erst
+      // nach Pflege durch den Supervisor eine eigene Farbe.
+      const seen = new Set();
+      const merged = [];
+      messenConfig.forEach(m => { merged.push({ name: m.name, bg: m.bg, fg: m.fg, erstellt: null }); seen.add(m.name); });
+      bqMessen.forEach(m => {
+        if (seen.has(m.name)) return;
+        merged.push({ name: m.name, bg: "#185fa5", fg: "#ffffff", erstellt: m.erstellt });
+        seen.add(m.name);
+      });
+
+      if (merged.length === 0) {
+        listEl.innerHTML = `<div class="muted" style="text-align:center;font-size:13px;">Noch keine Messen vorhanden.${getAuthRole() === "supervisor" ? " Lege unten eine an." : " Bitte den Supervisor, eine Messe anzulegen."}</div>`;
       } else {
         listEl.innerHTML = "";
-        messen.forEach(m => {
+        merged.forEach(m => {
+          const isActive = m.name === messeLabel;
           const btn = document.createElement("button");
-          btn.className = "btn" + (m.name === messeLabel ? " btn-info" : "");
-          btn.style.cssText = "width:100%;text-align:left;justify-content:space-between;display:flex;align-items:center;";
-          const dDate = parseServerTimestamp(m.erstellt);
+          btn.className = "btn";
+          btn.style.cssText = `width:100%;text-align:left;justify-content:space-between;display:flex;align-items:center;background:${isActive ? m.bg : "var(--bg2)"};color:${isActive ? m.fg : "var(--text)"};border-color:${m.bg};`;
+          const dDate = m.erstellt ? parseServerTimestamp(m.erstellt) : null;
           const date = dDate ? dDate.toLocaleDateString("de-DE") : "";
-          btn.innerHTML = `<span style="font-weight:500;">${m.name}</span><span class="muted" style="font-size:11px;">${date}</span>`;
+          btn.innerHTML = `
+            <span style="display:flex;align-items:center;gap:8px;min-width:0;">
+              <span style="width:12px;height:12px;border-radius:50%;background:${m.bg};border:1px solid rgba(0,0,0,.15);flex-shrink:0;"></span>
+              <span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.name}</span>
+            </span>
+            <span style="font-size:11px;opacity:.8;flex-shrink:0;">${date}</span>`;
           btn.onclick = () => selectMesse(m.name);
           listEl.appendChild(btn);
         });
@@ -471,6 +542,7 @@ async function selectMesse(name) {
   messeLabel = name;
   qs("#messe-label-display").textContent = name;
   qs("#messe-dialog").style.display = "none";
+  applyMesseTheme(name);
   saveUIState();
   planned = {}; committed = {}; commitLog = {}; commitDone = {};
   showNotification(`Messe "${name}" ausgewählt`, "ok");
@@ -481,12 +553,81 @@ async function selectMesse(name) {
 
 qs("#btn-switch-messe").addEventListener("click", () => showMesseDialog());
 
-qs("#btn-neue-messe").addEventListener("click", async () => {
-  const name = qs("#inp-neue-messe").value.trim();
-  if (!name) { showNotification("Bitte einen Messe-Namen eingeben", "warn"); return; }
-  await selectMesse(name);
-  qs("#inp-neue-messe").value = "";
+qs("#btn-manage-messen").addEventListener("click", () => {
+  qs("#messe-dialog").style.display = "none";
+  openSettingsToMessen();
 });
+
+// ── MESSEN-KONFIGURATION IN DEN EINSTELLUNGEN (nur Supervisor) ───────────
+function renderMessenConfigRows() {
+  const wrap = qs("#messen-config-list");
+  wrap.innerHTML = "";
+  if (messenConfig.length === 0) {
+    addMesseConfigRow({ name: "", bg: "#185fa5", fg: "#ffffff" });
+  } else {
+    messenConfig.forEach(m => addMesseConfigRow(m));
+  }
+}
+
+function addMesseConfigRow(data) {
+  const wrap = qs("#messen-config-list");
+  const row = document.createElement("div");
+  row.className = "messe-config-row";
+  row.style.cssText = "display:flex;gap:6px;align-items:center;";
+  row.innerHTML = `
+    <input type="text" class="mc-name" placeholder="Messename" value="${(data.name||"").replace(/"/g,"&quot;")}" style="flex:1;" />
+    <input type="color" class="mc-bg" value="${data.bg || "#185fa5"}" title="Hintergrundfarbe" style="width:36px;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border2);cursor:pointer;" />
+    <input type="color" class="mc-fg" value="${data.fg || "#ffffff"}" title="Schriftfarbe" style="width:36px;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border2);cursor:pointer;" />
+    <button class="btn-sm btn-danger btn-remove-messe-row" title="Entfernen"><i class="ti ti-trash"></i></button>`;
+  row.querySelector(".btn-remove-messe-row").addEventListener("click", () => row.remove());
+  wrap.appendChild(row);
+}
+
+async function saveMessenConfigToServer() {
+  const rows = [...document.querySelectorAll(".messe-config-row")].map(row => ({
+    name: row.querySelector(".mc-name").value.trim(),
+    bg:   row.querySelector(".mc-bg").value,
+    fg:   row.querySelector(".mc-fg").value,
+  })).filter(r => r.name);
+
+  const statusEl = qs("#messen-config-status");
+  statusEl.style.color = "var(--text2)";
+  statusEl.textContent = "Speichere…";
+  try {
+    const url = WEBHOOK_URL + "?action=messen_config_save&token=" + encodeURIComponent(getAuthToken()) +
+      "&list=" + encodeURIComponent(JSON.stringify(rows));
+    const resp = await fetch(url);
+    const json = await resp.json();
+    if (json.ok) {
+      messenConfig = json.config || rows;
+      statusEl.style.color = "var(--ok)";
+      statusEl.textContent = "Gespeichert.";
+      if (messeLabel) applyMesseTheme(messeLabel);
+    } else {
+      statusEl.style.color = "var(--err)";
+      statusEl.textContent = json.error || "Fehler beim Speichern.";
+    }
+  } catch(e) {
+    statusEl.style.color = "var(--err)";
+    statusEl.textContent = "Verbindungsfehler: " + e.message;
+  }
+}
+
+// Öffnet die Einstellungen direkt bei "Messen verwalten" (z.B. aus dem
+// Messe-Auswahl-Dialog heraus aufgerufen).
+async function openSettingsToMessen() {
+  const panel = qs("#settings-panel");
+  panel.style.display = "block";
+  qs("#inp-webhook").value = WEBHOOK_URL_DEFAULT || WEBHOOK_URL;
+  if (getAuthRole() === "supervisor") {
+    qs("#settings-pins").style.display = "block";
+    qs("#settings-messen").style.display = "block";
+    loadPinStatus();
+    await loadMessenConfig();
+    renderMessenConfigRows();
+  }
+  qs("#settings-messen")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 
 // ── UUID GENERATOR ────────────────────────────────────────────────────────
 function genUUID() {
@@ -872,6 +1013,24 @@ async function copyToClipboard(value, label) {
 // ean kann fehlen (dann wird nur die SKU angezeigt).
 function skuEanHTML(sku, ean) {
   let html = `<span class="copy-field">${sku}<i class="ti ti-copy copy-btn" title="SKU kopieren" onclick="event.stopPropagation();copyToClipboard('${sku}','SKU')"></i></span>`;
+  if (ean) {
+    html += ` · <span class="copy-field">${ean}<i class="ti ti-copy copy-btn" title="EAN kopieren" onclick="event.stopPropagation();copyToClipboard('${ean}','EAN')"></i></span>`;
+  }
+  return html;
+}
+
+// Variante ausschließlich für die Kommission-"Picken"-Kartenliste: die SKU
+// wird zusätzlich als Link zum Lagersystem des gerade gewählten Pickorts
+// (whPickort) dargestellt - {ARTIKELNUMMER} in der jeweiligen URL wird
+// durch die SKU ersetzt. Öffnet in einem neuen Tab (target=_blank), damit
+// der App-Zustand (Sync-Queue, Filter) nicht verloren geht.
+function skuEanHTMLForPick(sku, ean) {
+  const pickInfo = PICKORTE.find(p => p.key === whPickort);
+  const url = pickInfo && pickInfo.link ? pickInfo.link.replace("{ARTIKELNUMMER}", encodeURIComponent(sku)) : null;
+  const skuPart = url
+    ? `<a href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:inherit;text-decoration:underline;">${sku}</a>`
+    : sku;
+  let html = `<span class="copy-field">${skuPart}<i class="ti ti-copy copy-btn" title="SKU kopieren" onclick="event.stopPropagation();copyToClipboard('${sku}','SKU')"></i></span>`;
   if (ean) {
     html += ` · <span class="copy-field">${ean}<i class="ti ti-copy copy-btn" title="EAN kopieren" onclick="event.stopPropagation();copyToClipboard('${ean}','EAN')"></i></span>`;
   }
@@ -2126,7 +2285,7 @@ function renderWarehouse() {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
         <div style="flex:1;min-width:160px;">
           <div style="font-weight:500;font-size:13px;">${art.name}</div>
-          <div class="muted">${skuEanHTML(art.sku, art.ean)}${master ? ` · <span style="color:var(--info);">${master.name}</span>` : ""}</div>
+          <div class="muted">${skuEanHTMLForPick(art.sku, art.ean)}${master ? ` · <span style="color:var(--info);">${master.name}</span>` : ""}</div>
           <div class="chip-row">
             <span class="badge info">Geplant: ${qty}</span>
             <span class="badge ok">Komm.: ${comm}</span>
@@ -2758,7 +2917,7 @@ qs("#btn-reload").addEventListener("click", () => {
   startApp(true);
 });
 
-qs("#btn-settings").addEventListener("click", () => {
+qs("#btn-settings").addEventListener("click", async () => {
   const panel = qs("#settings-panel");
   const open  = panel.style.display === "none";
   panel.style.display = open ? "block" : "none";
@@ -2766,12 +2925,19 @@ qs("#btn-settings").addEventListener("click", () => {
     qs("#inp-webhook").value = WEBHOOK_URL_DEFAULT || WEBHOOK_URL;
     if (getAuthRole() === "supervisor") {
       qs("#settings-pins").style.display = "block";
+      qs("#settings-messen").style.display = "block";
       loadPinStatus();
+      await loadMessenConfig();
+      renderMessenConfigRows();
     } else {
       qs("#settings-pins").style.display = "none";
+      qs("#settings-messen").style.display = "none";
     }
   }
 });
+
+qs("#btn-add-messe-row").addEventListener("click", () => addMesseConfigRow({ name: "", bg: "#185fa5", fg: "#ffffff" }));
+qs("#btn-save-messen-config").addEventListener("click", saveMessenConfigToServer);
 
 qs("#btn-save-settings").addEventListener("click", () => {
   WEBHOOK_URL = qs("#inp-webhook").value.trim() || WEBHOOK_URL_DEFAULT;
@@ -2819,6 +2985,8 @@ async function startApp(forceReload = false) {
 
   ensureUser();
   updateUserBadge();
+  await loadMessenConfig();
+  if (messeLabel) applyMesseTheme(messeLabel);
   renderView();
   startSyncLoop();
   updateSyncStatusUI();
