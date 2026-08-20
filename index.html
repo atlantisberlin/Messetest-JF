@@ -109,6 +109,13 @@
     /* Pagination */
     .pagination{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;padding-top:12px;border-top:0.5px solid var(--border);}
 
+    /* Kopier-Buttons hinter SKU/EAN: klein, aber mit ausreichend Klickfläche
+       für Touch (Tablet/Handy), ohne den Zeilenfluss zu sprengen. */
+    .copy-field{display:inline-flex;align-items:center;gap:2px;}
+    .copy-btn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:4px;color:var(--text2);cursor:pointer;font-size:12px;flex-shrink:0;}
+    .copy-btn:hover{background:var(--bg2);color:var(--info);}
+    .copy-btn:active{background:var(--info-bg);color:var(--info);}
+
     /* ── RESPONSIVE (Tablet/Desktop) ──────────────────────────────────────
        Vorbereitung & Kommission werden meist am Computer/Tablet genutzt →
        hier ab 720px mehr Spalten & eine kompaktere, tabellenartigere Optik.
@@ -208,6 +215,23 @@
     </div>
   </div>
 
+  <!-- Benutzername-Dialog: erscheint zwingend nach jedem Login, solange
+       kein gültiger Name gesetzt ist. Kein Abbrechen-Button in diesem Fall -
+       "Unbekannt" darf nicht mehr als dauerhafter Wert entstehen können. -->
+  <div id="user-dialog" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:998;align-items:center;justify-content:center;padding:20px;">
+    <div style="background:var(--bg);border-radius:12px;padding:20px;width:100%;max-width:340px;">
+      <div style="font-weight:600;font-size:16px;margin-bottom:4px;">Wer bist du?</div>
+      <div class="muted" style="font-size:13px;margin-bottom:14px;">Der Name wird bei jeder Buchung (Planung, Kommissionierung, Verkauf) eingetragen.</div>
+      <input type="text" id="inp-user-name" placeholder="Vor- und Nachname" style="margin-bottom:12px;" autocomplete="off" />
+      <div style="display:flex;gap:8px;">
+        <button id="btn-cancel-user" class="btn" style="flex:1;display:none;">Abbrechen</button>
+        <button id="btn-save-user" class="btn btn-info" style="flex:1;">
+          <i class="ti ti-check"></i> Speichern
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px 0;">
     <div style="font-weight:600;font-size:17px;display:flex;align-items:center;gap:7px;">
       <i class="ti ti-anchor" style="color:var(--info);font-size:20px;"></i>
@@ -237,6 +261,15 @@
     <span id="sync-status" style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--ok);">
       <i class="ti ti-cloud-check" style="font-size:13px;"></i> Synchron
     </span>
+  </div>
+
+  <!-- Aktueller Benutzer, direkt unter der Messe-Zeile. Klick = Name ändern. -->
+  <div style="padding:5px 16px 0;">
+    <button id="btn-change-user" style="background:none;border:none;padding:0;display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);cursor:pointer;">
+      <i class="ti ti-user-circle" style="font-size:14px;"></i>
+      <span id="current-user-display">–</span>
+      <i class="ti ti-pencil" style="font-size:10px;opacity:.6;"></i>
+    </button>
   </div>
 
   <div id="settings-panel">
@@ -805,12 +838,90 @@ function showNotification(msg, type="ok") {
   notifTimer = setTimeout(() => area.innerHTML="", type === "err" ? 8000 : 3000);
 }
 
+// ── KOPIER-HELFER (SKU/EAN) ────────────────────────────────────────────────
+// Event-Delegation reicht hier nicht ohne Weiteres, da Karten häufig einen
+// eigenen Klick-Handler zum Öffnen der Detailansicht haben (Bubbling würde
+// den sonst zusätzlich auslösen) - daher inline onclick mit
+// event.stopPropagation(), analog zum bereits bestehenden Muster bei den
+// Mengenfeldern ("onclick=\"event.stopPropagation()\"").
+async function copyToClipboard(value, label) {
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    showNotification(`${label || "Wert"} kopiert: ${value}`, "ok");
+  } catch(e) {
+    // Fallback für ältere WebViews/PWA-Kontexte ohne Clipboard-API bzw.
+    // ohne erteilte Berechtigung.
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = value;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      showNotification(`${label || "Wert"} kopiert: ${value}`, "ok");
+    } catch(e2) {
+      showNotification("Kopieren nicht möglich in diesem Browser", "err");
+    }
+  }
+}
+
+// Baut die SKU/EAN-Zeile mit Kopier-Icons. sku ist praktisch nie leer,
+// ean kann fehlen (dann wird nur die SKU angezeigt).
+function skuEanHTML(sku, ean) {
+  let html = `<span class="copy-field">${sku}<i class="ti ti-copy copy-btn" title="SKU kopieren" onclick="event.stopPropagation();copyToClipboard('${sku}','SKU')"></i></span>`;
+  if (ean) {
+    html += ` · <span class="copy-field">${ean}<i class="ti ti-copy copy-btn" title="EAN kopieren" onclick="event.stopPropagation();copyToClipboard('${ean}','EAN')"></i></span>`;
+  }
+  return html;
+}
+
 // ── USER-DIALOG ───────────────────────────────────────────────────────────
+// Fragt den Benutzernamen ab. WICHTIG: anders als früher wird bei Abbruch
+// oder leerer Eingabe NICHT mehr automatisch "Unbekannt" dauerhaft
+// gespeichert - das war die Ursache dafür, dass in den Logs viele Zeilen
+// mit "Unbekannt" auftauchten (einmal weggeklickt/leer gelassen, blieb der
+// Wert für immer stehen, weil die alte Prüfung "if (currentUser) return"
+// auch bei "Unbekannt" als bereits gesetzt galt). Jetzt gilt nur ein
+// echter, nicht-leerer Name als gültig gesetzt.
 function ensureUser() {
-  if (currentUser) return;
-  const name = prompt("Wer bist du? (Name wird bei Buchungen eingetragen)") || "";
-  currentUser = name.trim() || "Unbekannt";
+  if (currentUser && currentUser !== "Unbekannt") { updateUserBadge(); return; }
+  showUserDialog();
+}
+
+function showUserDialog() {
+  const hasValidName = !!(currentUser && currentUser !== "Unbekannt");
+  qs("#inp-user-name").value = hasValidName ? currentUser : "";
+  // Abbrechen nur anbieten, wenn bereits ein gültiger Name existiert
+  // (dann ist es eine "Name ändern"-Aktion) - beim allerersten Mal / nach
+  // Logout gibt es bewusst keinen Ausweg ohne Eingabe.
+  qs("#btn-cancel-user").style.display = hasValidName ? "" : "none";
+  qs("#user-dialog").style.display = "flex";
+  qs("#inp-user-name").focus();
+}
+
+function hideUserDialog() {
+  qs("#user-dialog").style.display = "none";
+}
+
+function saveUserName() {
+  const val = qs("#inp-user-name").value.trim();
+  if (!val) {
+    qs("#inp-user-name").focus();
+    return; // kein leerer Name möglich - Dialog bleibt offen
+  }
+  currentUser = val;
   saveUIState();
+  hideUserDialog();
+  updateUserBadge();
+}
+
+function updateUserBadge() {
+  const el = qs("#current-user-display");
+  if (!el) return;
+  el.textContent = (currentUser && currentUser !== "Unbekannt") ? currentUser : "Kein Name gesetzt";
 }
 
 // ── LOGIN / ROLLEN ─────────────────────────────────────────────────────────
@@ -860,6 +971,13 @@ function logout() {
   stopAutoRefresh();
   stopSyncLoop();
   clearAuth();
+  // Benutzername bewusst NICHT übernehmen: ein Gerät kann an der Messe
+  // zwischen mehreren Personen weitergereicht werden - jede neue Anmeldung
+  // (= neue Session) soll den Namen erneut abfragen, statt den Namen der
+  // vorherigen Person unbemerkt weiterzuführen.
+  currentUser = "";
+  saveUIState();
+  updateUserBadge();
   location.hash = "";
   // App-internen Zustand zurücksetzen, damit die nächste Rolle nicht
   // versehentlich fremde Sicht-States (z.B. offene Detailansicht) erbt
@@ -1429,7 +1547,7 @@ function _renderSlaveRow(container, slave, isPlanned) {
       : `<div style="width:40px;height:40px;border-radius:6px;border:0.5px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="ti ti-photo-off" style="font-size:14px;color:var(--text2);"></i></div>`}
     <div style="flex:1;min-width:0;">
       <div style="font-size:12px;font-weight:500;line-height:1.35;color:${nameColor};">${slave.name}</div>
-      <div style="font-size:11px;color:${metaColor};margin-top:1px;">${slave.sku}${slave.ean ? " · " + slave.ean : ""}</div>
+      <div style="font-size:11px;color:${metaColor};margin-top:1px;">${skuEanHTML(slave.sku, slave.ean)}</div>
       ${stockGrid(slave.stocks, true)}
       ${isPlanned ? `<div style="font-size:11px;color:${done ? "#3b6d11" : "#854f0b"};margin-top:4px;">${comm}/${qty} komm.${!done ? ` · ${offen} offen` : ""}</div>` : ""}
     </div>`;
@@ -1533,7 +1651,7 @@ function _renderDetailViewInner(wrap, art, onBack) {
       ${imgTag(art, 72)}
       <div style="flex:1;min-width:0;">
         <div style="font-weight:600;font-size:14px;line-height:1.3;margin-bottom:3px;">${art.name}</div>
-        <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""}</div>
+        <div class="muted">${skuEanHTML(art.sku, art.ean)}</div>
         <div class="muted">${(art.category||"").split(" | ")[0]} · ${art.supplier}</div>
         <div style="display:flex;gap:8px;margin-top:6px;">
           <div style="flex:1;background:var(--bg);border-radius:var(--r);padding:5px 8px;">
@@ -1600,7 +1718,7 @@ function _renderDetailViewInner(wrap, art, onBack) {
         ${imgTag(sibling, 48)}
         <div style="flex:1;min-width:0;">
           <div style="font-weight:500;font-size:13px;line-height:1.3;margin-bottom:2px;">${sibling.name}</div>
-          <div class="muted">${sibling.sku}${sibling.ean ? " · " + sibling.ean : ""}</div>
+          <div class="muted">${skuEanHTML(sibling.sku, sibling.ean)}</div>
           <div class="muted detail-price">${sLoaded ? `VK: ${fmtEur(sibling.price)} · Min: ${fmtEur(sibling.minPrice)}` : `<span style="opacity:.5;">Preis lädt…</span>`}</div>
           <div class="detail-stock">${sLoaded ? stockGrid(sibling.stocks, true) : `<div class="muted" style="font-size:11px;opacity:.5;padding:4px 0;">Lagerbestand wird geladen…</div>`}</div>
           ${chips ? `<div class="chip-row">${chips}</div>` : ""}
@@ -1733,7 +1851,7 @@ function runPrepSearch() {
         ${imgTag(art, 52)}
         <div style="flex:1;min-width:0;">
           <div style="font-weight:500;font-size:13px;line-height:1.3;margin-bottom:2px;">${art.name}</div>
-          <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""} · ${(art.category||"").split(" | ")[0]}</div>
+          <div class="muted">${skuEanHTML(art.sku, art.ean)} · ${(art.category||"").split(" | ")[0]}</div>
           <div class="muted detail-price">${loaded ? "VK: " + fmtEur(art.price) : `<span style="opacity:.5;">VK: lädt…</span>`}${master ? ` · <span style="color:var(--info);">Variante</span>` : ""}</div>
           <div class="detail-stock">${loaded ? stockGrid(art.stocks, true) : `<div class="muted" style="font-size:11px;opacity:.5;padding:4px 0;">Lagerbestand wird geladen…</div>`}</div>
           ${chips ? `<div class="chip-row">${chips}</div>` : ""}
@@ -2008,7 +2126,7 @@ function renderWarehouse() {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
         <div style="flex:1;min-width:160px;">
           <div style="font-weight:500;font-size:13px;">${art.name}</div>
-          <div class="muted">${art.sku}${art.ean ? " · " + art.ean : ""}${master ? ` · <span style="color:var(--info);">${master.name}</span>` : ""}</div>
+          <div class="muted">${skuEanHTML(art.sku, art.ean)}${master ? ` · <span style="color:var(--info);">${master.name}</span>` : ""}</div>
           <div class="chip-row">
             <span class="badge info">Geplant: ${qty}</span>
             <span class="badge ok">Komm.: ${comm}</span>
@@ -2109,7 +2227,7 @@ function renderWarehouseHistoryBody(wrap) {
     const events = data.events || [];
     if (chains.length === 0 && events.length === 0) return;
     const art = artBySku[sku];
-    articleGroups.push({ sku, name: art ? art.name : sku, chains, events });
+    articleGroups.push({ sku, name: art ? art.name : sku, ean: art ? art.ean : "", chains, events });
   });
 
   wrap.insertAdjacentHTML("beforeend", `
@@ -2165,7 +2283,7 @@ function renderWarehouseHistoryBody(wrap) {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
         <div style="flex:1;min-width:160px;">
           <div style="font-weight:500;font-size:13px;">${g.name}</div>
-          <div class="muted">${g.sku}</div>
+          <div class="muted">${skuEanHTML(g.sku, g.ean)}</div>
           <div class="chip-row">${boxChips}</div>
         </div>
         <button class="btn-sm btn-toggle-history" data-sku="${g.sku}">
@@ -2629,6 +2747,11 @@ qs("#login-pin").addEventListener("keydown", e => { if (e.key === "Enter") attem
 qs("#btn-logout").addEventListener("click", logout);
 qs("#btn-save-pins").addEventListener("click", savePins);
 
+qs("#btn-change-user").addEventListener("click", showUserDialog);
+qs("#btn-save-user").addEventListener("click", saveUserName);
+qs("#btn-cancel-user").addEventListener("click", hideUserDialog);
+qs("#inp-user-name").addEventListener("keydown", e => { if (e.key === "Enter") saveUserName(); });
+
 qs("#btn-reload").addEventListener("click", () => {
   if (!confirm("Artikel neu aus BigQuery laden und Cache leeren?")) return;
   clearArticleCache();
@@ -2695,6 +2818,7 @@ async function startApp(forceReload = false) {
   hideLoading();
 
   ensureUser();
+  updateUserBadge();
   renderView();
   startSyncLoop();
   updateSyncStatusUI();
@@ -2717,6 +2841,7 @@ if (WEBHOOK_URL_DEFAULT) WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 loadSyncQueue();
 clearArticleCache(); // alten Cache aufräumen
 qs("#messe-label-display").textContent = messeLabel || "Messe auswählen…";
+updateUserBadge();
 
 // Login-Gate: ohne gültiges Token (pro Tab/PWA-Instanz, siehe AUTH-Kommentar
 // oben) wird nichts geladen - erst nach erfolgreichem Login startet startApp().
