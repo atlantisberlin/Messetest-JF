@@ -166,10 +166,12 @@
       .merkliste-group-wrap{grid-template-columns:repeat(auto-fill,minmax(360px,1fr));}
     }
 
-    /* Verkauf bleibt auf jeder Bildschirmgröße als schmale, telefon-taugliche
-       Spalte zentriert – Verkäufer nutzen dafür überwiegend das Smartphone. */
+    /* Verkaufslisten (Kundenlisten) bleiben bewusst schmal/einspaltig, da
+       Verkäufer dafür überwiegend das Smartphone nutzen - gilt NUR für
+       diese Unteransicht, nicht für die Preisliste (die soll die volle
+       Breite wie Vorbereitung/Kommission nutzen können). */
     @media(min-width:720px){
-      #view-sales{max-width:480px;margin:0 auto;}
+      .sales-listen-wrap{max-width:480px;margin:0 auto;}
     }
 
     /* ── LOGIN-OVERLAY ─────────────────────────────────────────────────── */
@@ -2949,6 +2951,7 @@ function renderSales() {
   outer.appendChild(subTabs);
 
   const wrap = document.createElement("div");
+  if (salesSubView === "listen") wrap.className = "sales-listen-wrap";
   outer.appendChild(wrap);
 
   if (salesSubView === "preisliste") renderPreisliste(wrap);
