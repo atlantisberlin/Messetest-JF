@@ -375,7 +375,7 @@ let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut
 let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbwGyXrYlLZ02_2pEV0PCJHGZCd4XU9h5lU3bhedFkf2nnadK52c-NPZBmey-5QcKRndsg/exec"; // Zentrale Webhook-URL
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbzr3xCsE3xCIQGsma8ArLN7Ae7MOO3Z3GFrQ_D4bbyqu2sCJkyZkuDfJk9F638cP4hz_g/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
@@ -436,6 +436,22 @@ let preisKategorie = "";
 let preisNurOhne   = false; // Checkbox "nur Artikel ohne hinterlegten Messepreis" - Default: aus, wie in der Vorbereitung
 let salesLists = [];
 let activeSales= null;
+
+// ── PREISLISTE (Unteransicht im Verkauf-Tab) ──────────────────────────────
+let salesSubView          = "listen"; // "listen" | "preisliste"
+let preislisteSearch      = "";
+let preislisteLieferant   = "";
+let preislisteKategorie   = "";
+let preislisteNurMessestand = false;
+let preislistePage        = 0;
+let preislisteStockOpen   = {}; // { sku: bool } - aufgeklappte Lagerbestände
+// Verschlüsselter Referenz-Code pro SKU (Ziffern des Mindestpreises
+// umgedreht + zweistellige Zufallszahl, analog zur Sheet-Formel). Wird
+// EINMAL pro Sitzung erzeugt und dann konstant gehalten - würde sich der
+// Code bei jedem Re-Render ändern, könnte ein aufmerksamer Kunde durch
+// Vergleich zweier Ansichten sofort erkennen, welche Ziffern die
+// Zufallsziffern sind und welche der echte, umgedrehte Preis.
+let preisCodeCache = {};
 
 // Kommissionierung: Lagerort, an dem gerade gepickt wird. Bestimmt sowohl
 // welche Artikel angezeigt werden (nur mit Bestand > 0 an diesem Ort) als
@@ -562,7 +578,7 @@ async function selectMesse(name) {
   qs("#messe-dialog").style.display = "none";
   applyMesseTheme(name);
   saveUIState();
-  planned = {}; committed = {}; commitLog = {}; commitDone = {}; preise = {};
+  planned = {}; committed = {}; commitLog = {}; commitDone = {}; preise = {}; preisCodeCache = {};
   showNotification(`Messe "${name}" ausgewählt`, "ok");
   await loadRemoteState(false);
   startAutoRefresh();
@@ -1829,8 +1845,11 @@ function renderPreise() {
     return;
   }
 
-  // EK/UVP/Akt. VK nachladen, falls noch nicht bekannt
-  ensureDetailsLoaded(geplant.map(a => a.sku), () => renderPreise());
+  // EK/UVP/Akt. VK/Bild nachladen, falls noch nicht bekannt - explizit auch
+  // für die Master-SKUs selbst, sonst bleibt deren Bild im Gruppen-Header
+  // leer (Master werden aus "geplant" bewusst ausgefiltert, siehe oben).
+  const masterSkus = [...new Set(geplant.map(a => getMasterOf(a)).filter(Boolean).map(m => m.sku))];
+  ensureDetailsLoaded([...geplant.map(a => a.sku), ...masterSkus], () => renderPreise());
 
   const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
   const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
@@ -2025,8 +2044,13 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
   })();
 
   row.innerHTML = `
-    <div style="font-size:13px;font-weight:500;margin-bottom:2px;">${slave.name}</div>
-    <div class="muted" style="margin-bottom:10px;">${skuEanHTML(slave.sku, slave.ean)}</div>
+    <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;">
+      ${imgTag(slave, 40)}
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:500;margin-bottom:2px;">${slave.name}</div>
+        <div class="muted">${skuEanHTML(slave.sku, slave.ean)}</div>
+      </div>
+    </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;">
       <div style="background:var(--bg2);border-radius:var(--r);padding:6px 8px;">
         <div class="muted" style="font-size:11px;">EK</div>
@@ -2896,8 +2920,36 @@ async function applyBookingCorrection(sku, chainId, newQty, newRef) {
 }
 
 // ── VERKAUF ───────────────────────────────────────────────────────────────
+// Router: zeigt die Unter-Tab-Leiste (Verkaufslisten / Preisliste) und
+// delegiert an die jeweilige Render-Funktion. Beide Unteransichten sind
+// für dieselben Rollen sichtbar, die den Verkauf-Tab überhaupt öffnen
+// dürfen (Verkauf, Planer, Supervisor) - keine zusätzliche Rollenprüfung
+// nötig, das übernimmt bereits applyRolePermissions() auf Tab-Ebene.
 function renderSales() {
-  const wrap = qs("#view-sales");
+  const outer = qs("#view-sales");
+  outer.innerHTML = "";
+
+  const subTabs = document.createElement("div");
+  subTabs.style.cssText = "display:flex;gap:4px;border-bottom:0.5px solid var(--border);margin-bottom:12px;";
+  [["listen", "Verkaufslisten"], ["preisliste", "Preisliste"]].forEach(([key, label]) => {
+    const b = document.createElement("button");
+    b.className = "sales-subtab";
+    const active = salesSubView === key;
+    b.style.cssText = `border:none;background:none;padding:8px 6px;font-size:13px;cursor:pointer;border-bottom:2px solid ${active ? "var(--info)" : "transparent"};color:${active ? "var(--info)" : "var(--text2)"};font-weight:${active ? "500" : "400"};`;
+    b.textContent = label;
+    b.addEventListener("click", () => { salesSubView = key; renderSales(); });
+    subTabs.appendChild(b);
+  });
+  outer.appendChild(subTabs);
+
+  const wrap = document.createElement("div");
+  outer.appendChild(wrap);
+
+  if (salesSubView === "preisliste") renderPreisliste(wrap);
+  else renderSalesListen(wrap);
+}
+
+function renderSalesListen(wrap) {
   wrap.innerHTML = `<p class="muted" style="margin-bottom:12px;">Verkaufslisten für Messe-Kunden.</p>`;
 
   const newBtn = document.createElement("button");
@@ -3051,6 +3103,233 @@ function renderSales() {
     saveState(); renderSales();
   };
   wrap.appendChild(delBtn);
+}
+
+// ── PREISLISTE (Unteransicht im Verkauf-Tab) ──────────────────────────────
+// Verschlüsselter Referenz-Code für den Mindestpreis: Ziffern umgedreht +
+// zweistellige Zufallszahl (10-99), analog zur bestehenden Sheet-Formel
+// (WENNFEHLER/JOIN/ArrayFormula/TEIL/ZUFALLSBEREICH). Wird pro SKU einmal
+// erzeugt und danach aus dem Cache wiederverwendet (siehe Kommentar bei
+// preisCodeCache oben) - Dekodierung: letzte zwei Ziffern weglassen, Rest
+// umdrehen.
+function obfuscateMinPreis(sku, minVal) {
+  if (!minVal || minVal <= 0) return "-";
+  if (preisCodeCache[sku] === undefined) {
+    const reversed = String(Math.round(minVal)).split("").reverse().join("");
+    const noise = Math.floor(Math.random() * 90) + 10; // 10-99, immer zweistellig
+    preisCodeCache[sku] = reversed + String(noise);
+  }
+  return preisCodeCache[sku];
+}
+
+function renderPreisliste(wrap) {
+  const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
+  const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
+
+  wrap.innerHTML = `
+    <div class="filter-bar">
+      <div class="search-bar" style="margin-bottom:8px;">
+        <i class="ti ti-search"></i>
+        <input type="text" id="preisliste-search" placeholder="Name, SKU oder EAN …" value="${preislisteSearch}" />
+      </div>
+      <div class="ac-wrap">
+        <input type="text" id="preisliste-lieferant" placeholder="Lieferant / Hersteller …" value="${preislisteLieferant}" />
+        <div class="ac-dropdown" id="ac-preisliste-lieferant" style="display:none;"></div>
+      </div>
+      <div class="ac-wrap">
+        <input type="text" id="preisliste-kategorie" placeholder="Kategorie …" value="${preislisteKategorie}" />
+        <div class="ac-dropdown" id="ac-preisliste-kategorie" style="display:none;"></div>
+      </div>
+      <label class="filter-toggle" style="margin-top:4px;">
+        <input type="checkbox" id="preisliste-messestand" ${preislisteNurMessestand ? "checked" : ""} />
+        Artikel Messestand
+      </label>
+    </div>
+    <div id="preisliste-results"></div>
+    <div id="preisliste-pagination"></div>
+  `;
+
+  makeAutocomplete(qs("#preisliste-lieferant"), qs("#ac-preisliste-lieferant"), () => allLieferanten, val => {
+    preislisteLieferant = val; preislistePage = 0; runPreislisteSearch();
+  });
+  makeAutocomplete(qs("#preisliste-kategorie"), qs("#ac-preisliste-kategorie"), () => allKategorien, val => {
+    preislisteKategorie = val; preislistePage = 0; runPreislisteSearch();
+  });
+  qs("#preisliste-search").addEventListener("input", e => { preislisteSearch = e.target.value; preislistePage = 0; runPreislisteSearch(); });
+  qs("#preisliste-lieferant").addEventListener("input", e => { preislisteLieferant = e.target.value; preislistePage = 0; runPreislisteSearch(); });
+  qs("#preisliste-kategorie").addEventListener("input", e => { preislisteKategorie = e.target.value; preislistePage = 0; runPreislisteSearch(); });
+  qs("#preisliste-messestand").addEventListener("change", e => { preislisteNurMessestand = e.target.checked; preislistePage = 0; runPreislisteSearch(); });
+
+  runPreislisteSearch();
+}
+
+function runPreislisteSearch() {
+  const resultsEl    = qs("#preisliste-results");
+  const paginationEl = qs("#preisliste-pagination");
+  if (!resultsEl) return;
+
+  const hasFilter = preislisteSearch.trim() || preislisteLieferant.trim() || preislisteKategorie.trim() || preislisteNurMessestand;
+  if (!hasFilter) {
+    resultsEl.innerHTML = `<div class="muted" style="text-align:center;padding:24px 0;font-size:13px;">
+      <i class="ti ti-filter" style="font-size:28px;display:block;margin-bottom:8px;opacity:.5;"></i>
+      Suche oder Filter verwenden um Artikel zu finden.
+    </div>`;
+    if (paginationEl) paginationEl.innerHTML = "";
+    return;
+  }
+
+  const sq = preislisteSearch.trim().toLowerCase();
+  const sl = preislisteLieferant.trim().toLowerCase();
+  const sk = preislisteKategorie.trim().toLowerCase();
+
+  const filtered = articles.filter(a => {
+    if (isMaster(a)) return false;
+    if (preislisteNurMessestand && (committed[a.sku] || 0) <= 0) return false;
+    if (sl && !(a.supplier||"").toLowerCase().includes(sl)) return false;
+    if (sk && !(a.category||"").toLowerCase().includes(sk)) return false;
+    if (sq) {
+      const tokens = sq.split(/\s+/).filter(Boolean);
+      const haystack = (a.name + " " + a.sku + " " + (a.ean||"")).toLowerCase();
+      if (!tokens.every(t => haystack.includes(t))) return false;
+    }
+    return true;
+  });
+
+  const total      = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  preislistePage   = Math.min(preislistePage, totalPages - 1);
+  const pageItems  = filtered.slice(preislistePage * PAGE_SIZE, (preislistePage + 1) * PAGE_SIZE);
+
+  resultsEl.innerHTML = "";
+
+  if (total === 0) {
+    resultsEl.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;">Keine Artikel gefunden.</div>`;
+    if (paginationEl) paginationEl.innerHTML = "";
+    return;
+  }
+
+  const info = document.createElement("div");
+  info.className = "muted";
+  info.style.cssText = "font-size:12px;margin-bottom:8px;";
+  info.textContent = `${total} Treffer · Seite ${preislistePage + 1} von ${totalPages}`;
+  resultsEl.appendChild(info);
+
+  pageItems.forEach(art => resultsEl.appendChild(_buildPreislisteCard(art)));
+
+  if (paginationEl) {
+    paginationEl.innerHTML = "";
+    if (totalPages > 1) {
+      const pg = document.createElement("div");
+      pg.className = "pagination";
+
+      const prevBtn = document.createElement("button");
+      prevBtn.className = "btn btn-sm";
+      prevBtn.innerHTML = `<i class="ti ti-chevron-left"></i> Zurück`;
+      prevBtn.disabled = preislistePage === 0;
+      prevBtn.onclick = () => { preislistePage--; runPreislisteSearch(); resultsEl.scrollIntoView({ behavior: "smooth" }); };
+
+      const pageInfo = document.createElement("span");
+      pageInfo.className = "muted";
+      pageInfo.style.fontSize = "12px";
+      pageInfo.textContent = `${preislistePage + 1} / ${totalPages}`;
+
+      const nextBtn = document.createElement("button");
+      nextBtn.className = "btn btn-sm";
+      nextBtn.innerHTML = `Weiter <i class="ti ti-chevron-right"></i>`;
+      nextBtn.disabled = preislistePage >= totalPages - 1;
+      nextBtn.onclick = () => { preislistePage++; runPreislisteSearch(); resultsEl.scrollIntoView({ behavior: "smooth" }); };
+
+      pg.appendChild(prevBtn);
+      pg.appendChild(pageInfo);
+      pg.appendChild(nextBtn);
+      paginationEl.appendChild(pg);
+    }
+  }
+
+  const visibleSkus = pageItems.map(a => a.sku);
+  ensureDetailsLoaded(visibleSkus, () => {
+    pageItems.forEach(art => {
+      if (!art._detailLoaded) return;
+      const card = resultsEl.querySelector(`.card[data-sku="${art.sku}"]`);
+      if (!card) return;
+      const uvpEl = card.querySelector(".pl-uvp");
+      const vkEl  = card.querySelector(".pl-vk");
+      const stockEl = card.querySelector(".pl-stock");
+      if (uvpEl)   uvpEl.textContent = fmtEur(art.uvp);
+      if (vkEl)    vkEl.textContent  = fmtEur(art.price);
+      if (stockEl) stockEl.innerHTML = stockGrid(art.stocks, true);
+    });
+  });
+}
+
+function _buildPreislisteCard(art) {
+  const sku        = art.sku;
+  const loaded     = art._detailLoaded;
+  const isRestposten = !!art.restposten;
+  const p          = preise[sku] || {};
+  const shopUrl    = art.productsId
+    ? `https://www.atlantis-onlineshop.de/xanario_pinfo.php?products_id=${encodeURIComponent(art.productsId)}`
+    : null;
+
+  const card = document.createElement("div");
+  card.className = "card";
+  card.dataset.sku = sku;
+  if (isRestposten) {
+    card.style.background   = "var(--err-bg)";
+    card.style.borderColor  = "var(--err)";
+  }
+
+  card.innerHTML = `
+    ${isRestposten ? `<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+      <i class="ti ti-alert-triangle" style="font-size:13px;color:var(--err);"></i>
+      <span style="font-size:11px;font-weight:500;color:var(--err);">Restposten</span>
+    </div>` : ""}
+    <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;">
+      ${imgTag(art, 48)}
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:500;line-height:1.3;">${art.name}</div>
+        <div class="muted" style="margin-top:2px;">${skuEanHTML(art.sku, art.ean)}</div>
+      </div>
+    </div>
+    ${shopUrl ? `<a href="${shopUrl}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--info);margin-bottom:12px;text-decoration:none;">
+      <i class="ti ti-external-link" style="font-size:13px;"></i> Im Onlineshop öffnen
+    </a>` : ""}
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;">
+      <div style="background:var(--bg2);border-radius:var(--r);padding:6px 8px;">
+        <div class="muted" style="font-size:11px;">UVP</div>
+        <div class="pl-uvp" style="font-size:14px;font-weight:500;">${loaded ? fmtEur(art.uvp) : "…"}</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--r);padding:6px 8px;">
+        <div class="muted" style="font-size:11px;">Akt. VK</div>
+        <div class="pl-vk" style="font-size:14px;font-weight:500;">${loaded ? fmtEur(art.price) : "…"}</div>
+      </div>
+      <div style="background:var(--info-bg);border-radius:var(--r);padding:6px 8px;">
+        <div style="font-size:11px;color:var(--info);">Messepreis</div>
+        <div style="font-size:14px;font-weight:500;color:var(--info);">${p.messe > 0 ? p.messe + " €" : "-"}</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--r);padding:6px 8px;">
+        <div class="muted" style="font-size:11px;">Referenz</div>
+        <div style="font-size:14px;font-weight:500;font-family:monospace;">${obfuscateMinPreis(sku, p.min)}</div>
+      </div>
+    </div>
+    <button class="btn-sm btn-toggle-stock" style="width:100%;justify-content:space-between;display:flex;">
+      Lagerbestände anzeigen
+      <i class="ti ti-chevron-down" style="font-size:13px;transition:transform .2s;transform:${preislisteStockOpen[sku] ? "rotate(180deg)" : "rotate(0deg)"};"></i>
+    </button>
+    <div class="pl-stock" style="display:${preislisteStockOpen[sku] ? "block" : "none"};margin-top:8px;">
+      ${loaded ? stockGrid(art.stocks, true) : `<div class="muted" style="font-size:11px;opacity:.6;padding:4px 0;">Lagerbestand wird geladen…</div>`}
+    </div>
+  `;
+
+  card.querySelector(".btn-toggle-stock").addEventListener("click", () => {
+    preislisteStockOpen[sku] = !preislisteStockOpen[sku];
+    const stockDiv = card.querySelector(".pl-stock");
+    const icon     = card.querySelector(".btn-toggle-stock i");
+    stockDiv.style.display = preislisteStockOpen[sku] ? "block" : "none";
+    icon.style.transform    = preislisteStockOpen[sku] ? "rotate(180deg)" : "rotate(0deg)";
+  });
+
+  return card;
 }
 
 // ── WEBHOOK ───────────────────────────────────────────────────────────────
