@@ -3333,7 +3333,12 @@ function renderSalesListen(wrap) {
   }
   wrap.appendChild(actionsWrap);
 
-  // Geparkte Listen (alle außer der gerade aktiven), durchsuchbar nach Kundenname
+  // Geparkte Listen (alle außer der gerade aktiven), durchsuchbar nach Kundenname.
+  // WICHTIG: Das Suchfeld selbst wird nur EINMAL erzeugt - sein "input"-Handler
+  // aktualisiert ausschließlich den separaten Ergebnis-Container darunter.
+  // Würde man hier stattdessen renderSales() aufrufen, würde bei jedem
+  // Tastendruck auch das Suchfeld selbst neu erzeugt und der Fokus ginge
+  // verloren (gleicher Fehler, den Vorbereitung/Preisliste bewusst vermeiden).
   const allParked = Object.keys(carts).filter(id => carts[id].status === "GEPARKT" && id !== uuid);
   if (allParked.length > 0) {
     const hdr = document.createElement("div");
@@ -3341,7 +3346,7 @@ function renderSalesListen(wrap) {
     hdr.textContent = "Geparkte Verkaufslisten";
     wrap.appendChild(hdr);
 
-    if (allParked.length > 3) {
+    if (allParked.length > 2) {
       const searchWrap = document.createElement("div");
       searchWrap.className = "search-bar";
       searchWrap.style.marginBottom = "8px";
@@ -3349,61 +3354,73 @@ function renderSalesListen(wrap) {
       wrap.appendChild(searchWrap);
       searchWrap.querySelector("#parked-cart-search").addEventListener("input", e => {
         parkedCartFilter = e.target.value;
-        renderSales();
+        renderParkedCartsResults(resultsDiv, allParked, uuid, cart);
       });
     }
 
-    const filterText = parkedCartFilter.trim().toLowerCase();
-    const parked = filterText
-      ? allParked.filter(id => (carts[id].kunde.name || "Unbenannt").toLowerCase().includes(filterText))
-      : allParked;
-
-    if (parked.length === 0) {
-      wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="padding:12px 0;">Keine geparkte Liste passt zu "${parkedCartFilter}".</div>`);
-    }
-
-    parked.forEach(id => {
-      const c = carts[id];
-      const total = c.items.reduce((s, i) => s + i.qty * i.price, 0);
-      const row = document.createElement("div");
-      row.className = "card";
-      row.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:8px;";
-      row.innerHTML = `
-        <div style="min-width:0;">
-          <div style="font-weight:500;font-size:14px;">${c.kunde.name || "Unbenannt"}</div>
-          <div class="muted">${c.items.length} Artikel · ${fmtEur(total)}</div>
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0;">
-          <button class="btn-sm btn-resume-cart"><i class="ti ti-chevron-right"></i> Weiter</button>
-          <button class="btn-sm btn-danger btn-delete-cart"><i class="ti ti-trash"></i></button>
-        </div>`;
-      row.querySelector(".btn-resume-cart").addEventListener("click", () => {
-        if (uuid !== id && (cart.items.length > 0 || cart.kunde.name)) parkCart(uuid);
-        activeCartUuid = id;
-        carts[id].status = "OFFEN";
-        touchSku(id);
-        sendWebhook("CART_HEADER_SET", {
-          cartUuid: id, status: "OFFEN",
-          kundeName: c.kunde.name, kundeStrasse: c.kunde.strasse,
-          kundePlzOrt: c.kunde.plzOrt, kundeKontakt: c.kunde.kontakt, kundeNotiz: c.kunde.notiz,
-        });
-        saveUIState();
-        renderSales();
-      });
-      row.querySelector(".btn-delete-cart").addEventListener("click", () => {
-        if (!confirm(`Verkaufsliste "${c.kunde.name || "Unbenannt"}" endgültig löschen?`)) return;
-        touchSku(id);
-        sendWebhook("CART_HEADER_SET", {
-          cartUuid: id, status: "GELOESCHT",
-          kundeName: c.kunde.name, kundeStrasse: c.kunde.strasse,
-          kundePlzOrt: c.kunde.plzOrt, kundeKontakt: c.kunde.kontakt, kundeNotiz: c.kunde.notiz,
-        });
-        delete carts[id];
-        renderSales();
-      });
-      wrap.appendChild(row);
-    });
+    const resultsDiv = document.createElement("div");
+    wrap.appendChild(resultsDiv);
+    renderParkedCartsResults(resultsDiv, allParked, uuid, cart);
   }
+}
+
+// Baut nur die Ergebnisliste der geparkten Verkaufslisten (siehe Kommentar
+// oben) - wird sowohl beim ersten Rendern als auch bei jedem Tastendruck im
+// Suchfeld aufgerufen, ohne das Suchfeld selbst anzufassen.
+function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
+  resultsDiv.innerHTML = "";
+
+  const filterText = parkedCartFilter.trim().toLowerCase();
+  const parked = filterText
+    ? allParked.filter(id => (carts[id].kunde.name || "Unbenannt").toLowerCase().includes(filterText))
+    : allParked;
+
+  if (parked.length === 0) {
+    resultsDiv.innerHTML = `<div class="muted" style="padding:12px 0;">Keine geparkte Liste passt zu "${parkedCartFilter}".</div>`;
+    return;
+  }
+
+  parked.forEach(id => {
+    const c = carts[id];
+    const total = c.items.reduce((s, i) => s + i.qty * i.price, 0);
+    const row = document.createElement("div");
+    row.className = "card";
+    row.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:8px;";
+    row.innerHTML = `
+      <div style="min-width:0;">
+        <div style="font-weight:500;font-size:14px;">${c.kunde.name || "Unbenannt"}</div>
+        <div class="muted">${c.items.length} Artikel · ${fmtEur(total)}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        <button class="btn-sm btn-resume-cart"><i class="ti ti-chevron-right"></i> Weiter</button>
+        <button class="btn-sm btn-danger btn-delete-cart"><i class="ti ti-trash"></i></button>
+      </div>`;
+    row.querySelector(".btn-resume-cart").addEventListener("click", () => {
+      if (uuid !== id && (activeCart.items.length > 0 || activeCart.kunde.name)) parkCart(uuid);
+      activeCartUuid = id;
+      carts[id].status = "OFFEN";
+      touchSku(id);
+      sendWebhook("CART_HEADER_SET", {
+        cartUuid: id, status: "OFFEN",
+        kundeName: c.kunde.name, kundeStrasse: c.kunde.strasse,
+        kundePlzOrt: c.kunde.plzOrt, kundeKontakt: c.kunde.kontakt, kundeNotiz: c.kunde.notiz,
+      });
+      saveUIState();
+      renderSales();
+    });
+    row.querySelector(".btn-delete-cart").addEventListener("click", () => {
+      if (!confirm(`Verkaufsliste "${c.kunde.name || "Unbenannt"}" endgültig löschen?`)) return;
+      touchSku(id);
+      sendWebhook("CART_HEADER_SET", {
+        cartUuid: id, status: "GELOESCHT",
+        kundeName: c.kunde.name, kundeStrasse: c.kunde.strasse,
+        kundePlzOrt: c.kunde.plzOrt, kundeKontakt: c.kunde.kontakt, kundeNotiz: c.kunde.notiz,
+      });
+      delete carts[id];
+      renderSales();
+    });
+    resultsDiv.appendChild(row);
+  });
 }
 
 // ── PREISLISTE (Unteransicht im Verkauf-Tab) ──────────────────────────────
