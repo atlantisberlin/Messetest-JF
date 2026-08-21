@@ -3131,27 +3131,50 @@ function renderSalesListen(wrap) {
     </div>`;
   } else {
     cart.items.forEach((item, i) => {
+      const isAdj = item.lieferart === "anpassung";
       const row = document.createElement("div");
       row.style.cssText = i > 0 ? "border-top:0.5px solid var(--border);padding-top:12px;margin-top:12px;" : "";
-      row.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:8px;">
-          <div style="font-size:14px;font-weight:500;flex:1;min-width:0;">${item.name}</div>
-          <button class="btn-sm btn-danger btn-remove-item" data-sku="${item.sku}" style="flex-shrink:0;"><i class="ti ti-trash"></i></button>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-          <div>
-            <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Menge</label>
-            <input type="number" min="1" step="1" class="cart-qty-inp" data-sku="${item.sku}" value="${item.qty}" style="width:100%;" />
+
+      if (isAdj) {
+        row.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:8px;">
+            <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+              <i class="ti ti-tag" style="font-size:14px;color:var(--text2);flex-shrink:0;"></i>
+              <div style="font-size:14px;font-weight:500;">${item.name}</div>
+            </div>
+            <button class="btn-sm btn-danger btn-remove-item" data-sku="${item.sku}" style="flex-shrink:0;"><i class="ti ti-trash"></i></button>
           </div>
           <div>
-            <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Verkaufspreis</label>
-            <input type="number" min="0" step="1" class="cart-price-inp" data-sku="${item.sku}" value="${item.price}" style="width:100%;" />
+            <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Betrag (€, negativ für Abzug)</label>
+            <input type="number" step="1" class="cart-price-inp" data-sku="${item.sku}" value="${item.price}" style="width:100%;" />
+          </div>`;
+      } else {
+        const p = preise[item.sku] || {};
+        row.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;gap:8px;">
+            <div style="font-size:14px;font-weight:500;flex:1;min-width:0;">${item.name}</div>
+            <button class="btn-sm btn-danger btn-remove-item" data-sku="${item.sku}" style="flex-shrink:0;"><i class="ti ti-trash"></i></button>
           </div>
-        </div>
-        <div style="display:flex;gap:6px;">
-          <button class="btn-sm cart-lieferart-btn ${item.lieferart === "mitnahme" ? "btn-info" : ""}" data-sku="${item.sku}" data-art="mitnahme"><i class="ti ti-shopping-bag"></i> Mitnahme</button>
-          <button class="btn-sm cart-lieferart-btn ${item.lieferart === "versand" ? "btn-info" : ""}" data-sku="${item.sku}" data-art="versand"><i class="ti ti-truck"></i> Versand</button>
-        </div>`;
+          <div class="muted" style="margin-bottom:8px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+            <span>SKU: ${item.sku}</span>
+            <i class="ti ti-copy copy-btn" title="SKU kopieren" onclick="event.stopPropagation();copyToClipboard('${item.sku}','SKU')"></i>
+            <span>· Referenz: <span style="font-family:monospace;">${obfuscateMinPreis(item.sku, p.min)}</span></span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+            <div>
+              <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Menge</label>
+              <input type="number" min="1" step="1" class="cart-qty-inp" data-sku="${item.sku}" value="${item.qty}" style="width:100%;" />
+            </div>
+            <div>
+              <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Verkaufspreis</label>
+              <input type="number" min="0" step="1" class="cart-price-inp" data-sku="${item.sku}" value="${item.price}" style="width:100%;" />
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn-sm cart-lieferart-btn ${item.lieferart === "mitnahme" ? "btn-info" : ""}" data-sku="${item.sku}" data-art="mitnahme"><i class="ti ti-shopping-bag"></i> Mitnahme</button>
+            <button class="btn-sm cart-lieferart-btn ${item.lieferart === "versand" ? "btn-info" : ""}" data-sku="${item.sku}" data-art="versand"><i class="ti ti-truck"></i> Versand</button>
+          </div>`;
+      }
       card.appendChild(row);
     });
   }
@@ -3171,8 +3194,12 @@ function renderSalesListen(wrap) {
   card.querySelectorAll(".cart-price-inp").forEach(inp => inp.addEventListener("change", () => {
     const item = cart.items.find(i => i.sku === inp.dataset.sku);
     if (!item) return;
-    item.price = Math.max(0, parseInt(inp.value) || 0);
+    const raw = parseInt(inp.value, 10);
+    // Anpassungsposten (Rabatt/Zuschlag) dürfen negativ sein, normale
+    // Artikelpreise nicht.
+    item.price = (item.lieferart === "anpassung") ? (isNaN(raw) ? 0 : raw) : Math.max(0, raw || 0);
     saveCartItem(uuid, item);
+    renderSales();
   }));
   card.querySelectorAll(".cart-lieferart-btn").forEach(b => b.addEventListener("click", () => {
     const item = cart.items.find(i => i.sku === b.dataset.sku);
@@ -3181,6 +3208,41 @@ function renderSalesListen(wrap) {
     saveCartItem(uuid, item);
     renderSales();
   }));
+
+  // Rabatt/Zuschlag: eigener "Artikel" ohne echte SKU (sku = generierte
+  // ID), lieferart="anpassung" markiert ihn als Sonderposten - läuft
+  // technisch durch dieselbe Artikel-Infrastruktur (ITEM_SET/ITEM_REMOVE),
+  // taucht aber nicht im Onlineshop/Bestand auf und zählt einfach in die
+  // Gesamtsumme mit rein (auch negativ).
+  const adjWrap = document.createElement("div");
+  adjWrap.style.marginTop = "10px";
+  adjWrap.innerHTML = `
+    <button class="btn-sm" id="btn-adj-toggle"><i class="ti ti-tag"></i> Rabatt/Zuschlag hinzufügen</button>
+    <div id="cart-adj-form" style="display:none;background:var(--bg2);border-radius:var(--r);padding:10px;margin-top:8px;">
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <input type="text" id="cart-adj-note" placeholder="Bemerkung (z.B. Rabatt, Versand Spanien)" style="flex:2;" />
+        <input type="number" step="1" id="cart-adj-amount" placeholder="Betrag (z.B. -13)" style="flex:1;" />
+      </div>
+      <button class="btn btn-info" id="btn-adj-confirm" style="width:100%;justify-content:center;">Hinzufügen</button>
+    </div>`;
+  wrap.appendChild(adjWrap);
+  adjWrap.querySelector("#btn-adj-toggle").addEventListener("click", () => {
+    const form = adjWrap.querySelector("#cart-adj-form");
+    form.style.display = form.style.display === "none" ? "block" : "none";
+  });
+  adjWrap.querySelector("#btn-adj-confirm").addEventListener("click", () => {
+    const note   = adjWrap.querySelector("#cart-adj-note").value.trim();
+    const amount = parseInt(adjWrap.querySelector("#cart-adj-amount").value, 10);
+    if (!note || isNaN(amount)) {
+      showNotification("Bitte Bemerkung und Betrag eingeben.", "warn");
+      return;
+    }
+    const fakeSku = "anpassung_" + genUUID();
+    const item = { sku: fakeSku, ean: "", name: note, qty: 1, price: amount, lieferart: "anpassung" };
+    cart.items.push(item);
+    saveCartItem(uuid, item);
+    renderSales();
+  });
 
   if (cart.items.length > 0) {
     const total = cart.items.reduce((s, i) => s + i.qty * i.price, 0);
