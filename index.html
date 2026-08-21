@@ -472,6 +472,7 @@ let preislisteStockOpen   = {}; // { sku: bool } - aufgeklappte Lagerbestände
 // Vergleich zweier Ansichten sofort erkennen, welche Ziffern die
 // Zufallsziffern sind und welche der echte, umgedrehte Preis.
 let preisCodeCache = {};
+let parkedCartFilter = ""; // Suchtext für "Geparkte Verkaufslisten" (nach Kundenname)
 
 // Kommissionierung: Lagerort, an dem gerade gepickt wird. Bestimmt sowohl
 // welche Artikel angezeigt werden (nur mit Bestand > 0 an diesem Ort) als
@@ -3332,13 +3333,34 @@ function renderSalesListen(wrap) {
   }
   wrap.appendChild(actionsWrap);
 
-  // Geparkte Listen (alle außer der gerade aktiven)
-  const parked = Object.keys(carts).filter(id => carts[id].status === "GEPARKT" && id !== uuid);
-  if (parked.length > 0) {
+  // Geparkte Listen (alle außer der gerade aktiven), durchsuchbar nach Kundenname
+  const allParked = Object.keys(carts).filter(id => carts[id].status === "GEPARKT" && id !== uuid);
+  if (allParked.length > 0) {
     const hdr = document.createElement("div");
     hdr.style.cssText = "font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin:20px 0 8px;";
     hdr.textContent = "Geparkte Verkaufslisten";
     wrap.appendChild(hdr);
+
+    if (allParked.length > 3) {
+      const searchWrap = document.createElement("div");
+      searchWrap.className = "search-bar";
+      searchWrap.style.marginBottom = "8px";
+      searchWrap.innerHTML = `<i class="ti ti-search"></i><input type="text" id="parked-cart-search" placeholder="Nach Kundenname suchen …" value="${parkedCartFilter}" />`;
+      wrap.appendChild(searchWrap);
+      searchWrap.querySelector("#parked-cart-search").addEventListener("input", e => {
+        parkedCartFilter = e.target.value;
+        renderSales();
+      });
+    }
+
+    const filterText = parkedCartFilter.trim().toLowerCase();
+    const parked = filterText
+      ? allParked.filter(id => (carts[id].kunde.name || "Unbenannt").toLowerCase().includes(filterText))
+      : allParked;
+
+    if (parked.length === 0) {
+      wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="padding:12px 0;">Keine geparkte Liste passt zu "${parkedCartFilter}".</div>`);
+    }
 
     parked.forEach(id => {
       const c = carts[id];
