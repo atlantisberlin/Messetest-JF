@@ -2559,7 +2559,6 @@ function renderWarehouse() {
     <i class="ti ti-search"></i>
     <input type="text" id="wh-search" placeholder="Name, SKU oder EAN …" value="${whSearch}" />`;
   wrap.appendChild(searchWrap);
-  qs("#wh-search").addEventListener("input", e => { whSearch = e.target.value; saveUIState(); renderWarehouse(); });
 
   const filterWrap = document.createElement("div");
   filterWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;";
@@ -2574,18 +2573,43 @@ function renderWarehouse() {
     </div>`;
   wrap.appendChild(filterWrap);
 
+  // Eigener Container für Statistik + Kartenliste: Suchfeld tippt nur hier
+  // hinein neu, ohne sich selbst (oder die Filterfelder) neu zu erzeugen -
+  // sonst geht bei jedem Zeichen der Fokus verloren (gleicher Fehler wie
+  // vorhin bei den geparkten Verkaufslisten, hier an der ursprünglichen
+  // Stelle im Code behoben).
+  const resultsWrap = document.createElement("div");
+  wrap.appendChild(resultsWrap);
+
+  qs("#wh-search").addEventListener("input", e => { whSearch = e.target.value; saveUIState(); renderWarehouseResultsBody(resultsWrap); });
+
   const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
   const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
   makeAutocomplete(qs("#wh-kategorie"), qs("#wh-ac-kategorie"), () => allKategorien, val => {
-    whKategorie = val; saveUIState(); renderWarehouse();
+    whKategorie = val; saveUIState(); renderWarehouseResultsBody(resultsWrap);
   });
   makeAutocomplete(qs("#wh-lieferant"), qs("#wh-ac-lieferant"), () => allLieferanten, val => {
-    whLieferant = val; saveUIState(); renderWarehouse();
+    whLieferant = val; saveUIState(); renderWarehouseResultsBody(resultsWrap);
   });
   qs("#wh-kategorie").addEventListener("input", e => { whKategorie = e.target.value; saveUIState(); });
-  qs("#wh-kategorie").addEventListener("change", () => renderWarehouse());
+  qs("#wh-kategorie").addEventListener("change", () => renderWarehouseResultsBody(resultsWrap));
   qs("#wh-lieferant").addEventListener("input", e => { whLieferant = e.target.value; saveUIState(); });
-  qs("#wh-lieferant").addEventListener("change", () => renderWarehouse());
+  qs("#wh-lieferant").addEventListener("change", () => renderWarehouseResultsBody(resultsWrap));
+
+  renderWarehouseResultsBody(resultsWrap);
+}
+
+// Baut nur Statistik-Kachel + Kartenliste der Kommission-Picken-Ansicht
+// (siehe Kommentar bei resultsWrap oben) - wird initial und bei jeder
+// Filteränderung neu aufgerufen, ohne Suchfeld/Filterfelder anzufassen.
+function renderWarehouseResultsBody(resultsWrap) {
+  resultsWrap.innerHTML = "";
+
+  const plannedAnywhere = articles.some(a => (planned[a.sku] || 0) > 0 && !commitDone[a.sku]);
+  const locationAll = articles.filter(a =>
+    (planned[a.sku] || 0) > 0 && (a.stocks?.[whPickort] || 0) > 0
+  );
+  const pickInfo = PICKORTE.find(p => p.key === whPickort);
 
   const ws = whSearch.trim().toLowerCase();
   const wk = whKategorie.trim().toLowerCase();
@@ -2606,26 +2630,26 @@ function renderWarehouse() {
   const toCommit = locationFiltered.filter(a => !commitDone[a.sku]);
 
   if (!plannedAnywhere && locationAll.length === 0) {
-    wrap.insertAdjacentHTML("beforeend", `<div style="text-align:center;padding:32px 0;" class="muted">
+    resultsWrap.innerHTML = `<div style="text-align:center;padding:32px 0;" class="muted">
       <i class="ti ti-clipboard-list" style="font-size:40px;display:block;margin-bottom:12px;"></i>
       Noch keine Artikel in der Vorbereitung ausgewählt.
-    </div>`);
+    </div>`;
     return;
   }
   if (toCommit.length === 0) {
     const filterActive = ws || wk || wl;
-    wrap.insertAdjacentHTML("beforeend", `<div style="text-align:center;padding:32px 0;" class="muted">
+    resultsWrap.innerHTML = `<div style="text-align:center;padding:32px 0;" class="muted">
       <i class="ti ti-packages" style="font-size:40px;display:block;margin-bottom:12px;opacity:.5;"></i>
       Keine offenen Artikel${filterActive ? " für diesen Filter" : ""} mit Bestand in <strong>${pickInfo.label}</strong>.<br>
       <span style="font-size:12px;">${filterActive ? "Filter anpassen, anderen" : "Anderen"} Lagerort wählen oder Lagerdaten werden noch geladen.</span>
-    </div>`);
+    </div>`;
     return;
   }
 
   const totalPlanned   = locationFiltered.reduce((s, a) => s + (planned[a.sku] || 0), 0);
   const totalCommitted = locationFiltered.reduce((s, a) => s + (committed[a.sku] || 0), 0);
   const totalOpen      = Math.max(0, totalPlanned - totalCommitted);
-  wrap.insertAdjacentHTML("beforeend", `
+  resultsWrap.insertAdjacentHTML("beforeend", `
     <div class="card" style="background:var(--bg2);margin-bottom:16px;">
       <div class="muted" style="text-align:center;margin-bottom:6px;font-size:12px;">Zahlen beziehen sich auf <strong>${pickInfo.label}</strong>${(ws||wk||wl) ? " · gefiltert" : ""}</div>
       <div style="display:flex;gap:16px;justify-content:space-around;text-align:center;">
@@ -2637,7 +2661,7 @@ function renderWarehouse() {
 
   const itemsWrap = document.createElement("div");
   itemsWrap.id = "wh-items";
-  wrap.appendChild(itemsWrap);
+  resultsWrap.appendChild(itemsWrap);
 
   toCommit.forEach(art => {
     const sku   = art.sku;
@@ -2700,7 +2724,7 @@ function renderWarehouse() {
     itemsWrap.appendChild(card);
   });
 
-  wrap.querySelectorAll(".btn-commit").forEach(b => b.addEventListener("click", async () => {
+  resultsWrap.querySelectorAll(".btn-commit").forEach(b => b.addEventListener("click", async () => {
     const sku  = b.dataset.sku;
     const art  = articles.find(a => a.sku === sku);
     const inp  = b.closest(".card").querySelector(".inp-wh-qty");
@@ -2717,10 +2741,10 @@ function renderWarehouse() {
     saveState();
     showNotification(`${entnahme}× ${art.name} kommissioniert${ref ? " → " + ref : ""}`);
     await sendWebhook("COMMIT", { sku, art, qty: entnahme, ref, uuid: bookingUuid });
-    renderWarehouse();
+    renderWarehouseResultsBody(resultsWrap);
   }));
 
-  wrap.querySelectorAll(".btn-undo").forEach(b => b.addEventListener("click", async () => {
+  resultsWrap.querySelectorAll(".btn-undo").forEach(b => b.addEventListener("click", async () => {
     const sku = b.dataset.sku;
     const art = articles.find(a => a.sku === sku);
     const chains = (commitLog[sku] && commitLog[sku].chains) || [];
@@ -2734,7 +2758,7 @@ function renderWarehouse() {
     await applyBookingCorrection(sku, lastChain.chainId, 0, "");
   }));
 
-  wrap.querySelectorAll(".btn-remove-from-prep").forEach(b => b.addEventListener("click", async () => {
+  resultsWrap.querySelectorAll(".btn-remove-from-prep").forEach(b => b.addEventListener("click", async () => {
     const sku = b.dataset.sku;
     const art = articles.find(a => a.sku === sku);
     const hasCommitted = (committed[sku] || 0) > 0;
@@ -2747,7 +2771,7 @@ function renderWarehouse() {
     saveState();
     showNotification(`${art.name} aus Kommissionsliste entfernt`, "warn");
     await sendWebhook("REMOVE", { sku, art, currentPlanned: planned[sku] || 0 });
-    renderWarehouse();
+    renderWarehouseResultsBody(resultsWrap);
   }));
 }
 
