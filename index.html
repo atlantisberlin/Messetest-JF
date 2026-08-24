@@ -68,7 +68,7 @@
     .notif-warn{background:var(--warn-bg);color:var(--warn);}
     .notif-err{background:var(--err-bg);color:var(--err);}
     #settings-panel{display:none;padding:12px 16px;border-bottom:0.5px solid var(--border);background:var(--bg2);}
-    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-sales{display:none;}
+    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-sales,#view-journal{display:none;}
     /* Lade-Overlay */
     #loading-overlay{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;}
     #loading-overlay.hidden{display:none;}
@@ -358,6 +358,7 @@
     <button class="tab" data-tab="preise" data-roles="supervisor,planer"><i class="ti ti-currency-euro"></i>Messepreise</button>
     <button class="tab" data-tab="warehouse" data-roles="supervisor,planer,kommission"><i class="ti ti-packages"></i>Kommission</button>
     <button class="tab" data-tab="sales" data-roles="supervisor,planer,verkauf"><i class="ti ti-shopping-cart"></i>Verkauf</button>
+    <button class="tab" data-tab="journal" data-roles="supervisor"><i class="ti ti-history"></i>Journal</button>
   </div>
 
   <div id="notification-area"></div>
@@ -368,6 +369,7 @@
     <div id="view-preise"></div>
     <div id="view-warehouse"></div>
     <div id="view-sales"></div>
+    <div id="view-journal"></div>
   </div>
 </div>
 
@@ -394,7 +396,7 @@ let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut
 let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbz9cAf6I_B0f7iry47xvo-ei3XccJgNHIMLPAvvcL0guU1Oas0fPA-mHJi29whV6fEfLg/exec"; // Zentrale Webhook-URL
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbz_m9P9CaZm-ByiuwoibbOvFtjE73XH9E22BWr0Ba2CnDf2SlVeogymifP95rVyMBZn3A/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
@@ -407,7 +409,7 @@ let messenConfig = [];
 // überlebt einen normalen Reload innerhalb desselben Tabs/derselben
 // PWA-Instanz, verlangt aber bei echtem Neustart/neuem Tab erneutes Login.
 const TAB_PERMISSIONS = {
-  supervisor: ["prep", "merkliste", "preise", "warehouse", "sales"],
+  supervisor: ["prep", "merkliste", "preise", "warehouse", "sales", "journal"],
   planer:     ["prep", "merkliste", "preise", "warehouse", "sales"],
   kommission: ["warehouse"],
   verkauf:    ["sales"],
@@ -1468,7 +1470,7 @@ function parseCSV(text) {
 
 // ── VIEWS ─────────────────────────────────────────────────────────────────
 function renderView() {
-  ["prep","merkliste","preise","warehouse","sales"].forEach(v => qs(`#view-${v}`).style.display = "none");
+  ["prep","merkliste","preise","warehouse","sales","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
   qs(`#view-${currentView}`).style.display = "block";
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === currentView));
   if (currentView === "prep")       renderPrep();
@@ -1476,6 +1478,7 @@ function renderView() {
   if (currentView === "preise")     renderPreise();
   if (currentView === "warehouse")  renderWarehouse();
   if (currentView === "sales")      renderSales();
+  if (currentView === "journal")    renderJournal();
 }
 
 // ── AUTOCOMPLETE HELPER ───────────────────────────────────────────────────
@@ -3091,6 +3094,99 @@ async function completeCart(uuid) {
     kunde: cart.kunde,
   });
   saveState();
+}
+
+// ── AKTIVITÄTEN-JOURNAL (nur Supervisor) ──────────────────────────────────
+// Übersetzt einen normalisierten Journal-Eintrag vom Backend (siehe
+// loadActivityJournal()) in einen lesbaren Satz. detail1/2/3 bedeuten je
+// nach Quelle etwas anderes - siehe Backend-Kommentar.
+function describeJournalEntry(e) {
+  const user = e.benutzer || "Unbekannt";
+  const name = e.artikelname || e.sku || "(ohne Namen)";
+  const key  = e.quelle + ":" + e.aktion;
+
+  switch (key) {
+    case "kommissionierung:PLAN_SET":
+      return `${user} hat die Planmenge von „${name}" auf ${e.menge} gesetzt`;
+    case "kommissionierung:REMOVE":
+      return `${user} hat „${name}" aus der Planung entfernt`;
+    case "kommissionierung:PREIS_SET":
+      return `${user} hat Preise für „${name}" gesetzt (Mindestpreis ${e.detail2 || "-"} €, Messepreis ${e.detail3 || "-"} €)`;
+    case "kommissionierung:COMMIT":
+      return `${user} hat ${e.menge}× „${name}" kommissioniert${e.detail1 ? " (Box: " + e.detail1 + ")" : ""}`;
+    case "kommissionierung:COMMIT_UNDO":
+      return `${user} hat eine Kommissionierung von „${name}" storniert (${Math.abs(e.menge)}×)`;
+    case "kommissionierung:SALE":
+      return `${user} hat ${Math.abs(e.menge)}× „${name}" verkauft`;
+    case "verkaufsliste:OFFEN":
+      return `${user} hat eine Verkaufsliste eröffnet${e.artikelname ? " für „" + e.artikelname + "\"" : ""}`;
+    case "verkaufsliste:GEPARKT":
+      return `${user} hat die Verkaufsliste „${e.artikelname || "Unbenannt"}" geparkt`;
+    case "verkaufsliste:ABGESCHLOSSEN":
+      return `${user} hat den Verkauf an „${e.artikelname || "Unbenannt"}" abgeschlossen`;
+    case "verkaufsliste:GELOESCHT":
+      return `${user} hat die Verkaufsliste „${e.artikelname || "Unbenannt"}" gelöscht`;
+    case "verkaufsliste_artikel:ITEM_SET":
+      return `${user} hat „${name}" in einer Verkaufsliste aktualisiert (${e.menge}× · ${e.detail2 || "0"} €${e.detail3 === "versand" ? " · Versand" : ""})`;
+    case "verkaufsliste_artikel:ITEM_REMOVE":
+      return `${user} hat „${name}" aus einer Verkaufsliste entfernt`;
+    default:
+      return `${user}: ${e.aktion} (${name})`;
+  }
+}
+
+async function renderJournal() {
+  const wrap = qs("#view-journal");
+  wrap.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;">Lade Journal…</div>`;
+
+  if (!messeLabel) {
+    wrap.innerHTML = `<div class="muted" style="text-align:center;padding:24px 0;">Bitte zuerst eine Messe auswählen.</div>`;
+    return;
+  }
+
+  try {
+    const resp = await fetch(authUrl(WEBHOOK_URL + "?action=activity_journal&messe=" + encodeURIComponent(messeLabel)));
+    const json = await resp.json();
+    if (!json.ok) {
+      wrap.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;color:var(--err);">Fehler: ${json.error || "unbekannt"}</div>`;
+      return;
+    }
+    const journal = json.journal || [];
+    wrap.innerHTML = "";
+
+    const hdr = document.createElement("div");
+    hdr.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;";
+    hdr.innerHTML = `<span style="font-weight:600;font-size:14px;">Aktivitäten-Journal</span>
+      <button class="btn-sm" id="btn-journal-refresh"><i class="ti ti-refresh"></i> Aktualisieren</button>`;
+    wrap.appendChild(hdr);
+    hdr.querySelector("#btn-journal-refresh").addEventListener("click", renderJournal);
+
+    if (journal.length === 0) {
+      wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="text-align:center;padding:24px 0;">
+        <i class="ti ti-history" style="font-size:32px;display:block;margin-bottom:8px;opacity:.5;"></i>
+        Noch keine Aktivitäten für diese Messe.
+      </div>`);
+      return;
+    }
+
+    if (journal.length >= 300) {
+      wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="font-size:11px;margin-bottom:8px;">Zeigt die letzten 300 Aktivitäten.</div>`);
+    }
+
+    journal.forEach(e => {
+      const d = parseServerTimestamp(e.zeitstempel);
+      const dLabel = d ? d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-";
+      const row = document.createElement("div");
+      row.className = "card";
+      row.style.cssText = "padding:10px 12px;margin-bottom:6px;";
+      row.innerHTML = `
+        <div class="muted" style="font-size:11px;margin-bottom:2px;">${dLabel}</div>
+        <div style="font-size:13px;">${describeJournalEntry(e)}</div>`;
+      wrap.appendChild(row);
+    });
+  } catch(e) {
+    wrap.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;color:var(--err);">Verbindungsfehler: ${e.message}</div>`;
+  }
 }
 
 // ── VERKAUF ───────────────────────────────────────────────────────────────
