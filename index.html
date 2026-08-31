@@ -396,7 +396,7 @@ let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut
 let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbz_m9P9CaZm-ByiuwoibbOvFtjE73XH9E22BWr0Ba2CnDf2SlVeogymifP95rVyMBZn3A/exec"; // Zentrale Webhook-URL
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbz9cAf6I_B0f7iry47xvo-ei3XccJgNHIMLPAvvcL0guU1Oas0fPA-mHJi29whV6fEfLg/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
@@ -2069,6 +2069,8 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
   const p      = preise[sku] || {};
   const loaded = slave._detailLoaded;
   const ek     = loaded ? Number(slave.costPrice) || 0 : 0;
+  const geplantMenge = planned[sku] || 0;
+  const gepicktMenge = committed[sku] || 0;
 
   const row = document.createElement("div");
   row.dataset.sku = sku;
@@ -2087,12 +2089,23 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
   })();
 
   row.innerHTML = `
-    <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;">
+    <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;">
       ${imgTag(slave, 40)}
       <div style="flex:1;min-width:0;">
-        <div style="font-size:13px;font-weight:500;margin-bottom:2px;">${slave.name}</div>
+        <div style="font-size:13px;font-weight:500;margin-bottom:4px;">${slave.name}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:2px;">
+          <span class="badge info">Geplant: ${geplantMenge}</span>
+          <span class="badge ok">Gepickt: ${gepicktMenge}</span>
+        </div>
         <div class="muted">${skuEanHTML(slave.sku, slave.ean)}</div>
       </div>
+    </div>
+    <button class="btn-sm btn-toggle-preis-stock" style="width:100%;justify-content:space-between;display:flex;margin-bottom:10px;">
+      Lagerbestände anzeigen
+      <i class="ti ti-chevron-down" style="font-size:13px;transition:transform .2s;"></i>
+    </button>
+    <div class="preis-stock" style="display:none;margin-bottom:10px;">
+      ${loaded ? stockGrid(slave.stocks, true) : `<div class="muted" style="font-size:11px;opacity:.6;padding:4px 0;">Lagerbestand wird geladen…</div>`}
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;">
       <div style="background:var(--bg2);border-radius:var(--r);padding:6px 8px;">
@@ -2123,6 +2136,14 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
     <button class="btn btn-ok btn-save-preis" style="width:100%;justify-content:center;">
       <i class="ti ti-device-floppy"></i> Speichern
     </button>`;
+
+  row.querySelector(".btn-toggle-preis-stock").addEventListener("click", () => {
+    const stockDiv = row.querySelector(".preis-stock");
+    const icon     = row.querySelector(".btn-toggle-preis-stock i");
+    const open     = stockDiv.style.display === "none";
+    stockDiv.style.display = open ? "block" : "none";
+    icon.style.transform    = open ? "rotate(180deg)" : "rotate(0deg)";
+  });
 
   row.querySelector(".btn-save-preis").addEventListener("click", async () => {
     const minVal   = Math.max(0, parseInt(row.querySelector(".preis-min-inp").value) || 0);
