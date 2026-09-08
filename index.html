@@ -68,7 +68,7 @@
     .notif-warn{background:var(--warn-bg);color:var(--warn);}
     .notif-err{background:var(--err-bg);color:var(--err);}
     #settings-panel{display:none;padding:12px 16px;border-bottom:0.5px solid var(--border);background:var(--bg2);}
-    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-sales,#view-journal{display:none;}
+    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-sales,#view-journal,#view-fehlmengen{display:none;}
     /* Lade-Overlay */
     #loading-overlay{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;}
     #loading-overlay.hidden{display:none;}
@@ -357,6 +357,7 @@
     <button class="tab" data-tab="merkliste" data-roles="supervisor,planer"><i class="ti ti-star"></i>Merkliste</button>
     <button class="tab" data-tab="preise" data-roles="supervisor,planer"><i class="ti ti-currency-euro"></i>Messepreise</button>
     <button class="tab" data-tab="warehouse" data-roles="supervisor,planer,kommission"><i class="ti ti-packages"></i>Kommission</button>
+    <button class="tab" data-tab="fehlmengen" data-roles="supervisor,planer"><i class="ti ti-alert-triangle"></i>Fehlmengen</button>
     <button class="tab" data-tab="sales" data-roles="supervisor,planer,verkauf"><i class="ti ti-shopping-cart"></i>Verkauf</button>
     <button class="tab" data-tab="journal" data-roles="supervisor"><i class="ti ti-history"></i>Journal</button>
   </div>
@@ -368,6 +369,7 @@
     <div id="view-merkliste"></div>
     <div id="view-preise"></div>
     <div id="view-warehouse"></div>
+    <div id="view-fehlmengen"></div>
     <div id="view-sales"></div>
     <div id="view-journal"></div>
   </div>
@@ -409,8 +411,8 @@ let messenConfig = [];
 // überlebt einen normalen Reload innerhalb desselben Tabs/derselben
 // PWA-Instanz, verlangt aber bei echtem Neustart/neuem Tab erneutes Login.
 const TAB_PERMISSIONS = {
-  supervisor: ["prep", "merkliste", "preise", "warehouse", "sales", "journal"],
-  planer:     ["prep", "merkliste", "preise", "warehouse", "sales"],
+  supervisor: ["prep", "merkliste", "preise", "warehouse", "fehlmengen", "sales", "journal"],
+  planer:     ["prep", "merkliste", "preise", "warehouse", "fehlmengen", "sales"],
   kommission: ["warehouse"],
   verkauf:    ["sales"],
 };
@@ -474,6 +476,14 @@ let preislisteStockOpen   = {}; // { sku: bool } - aufgeklappte Lagerbestände
 // Vergleich zweier Ansichten sofort erkennen, welche Ziffern die
 // Zufallsziffern sind und welche der echte, umgedrehte Preis.
 let preisCodeCache = {};
+
+// ── FEHLMENGEN (Supervisor + Planer) ───────────────────────────────────────
+let fehlmengeSearch    = "";
+let fehlmengeKategorie = "";
+let fehlmengeLieferant = "";
+// Standardmäßig alle Lager mitgezählt - Checkbox abwählen = dieses Lager
+// fließt nicht in die Fehlmengen-Berechnung ein.
+let fehlmengeLager = { zl: true, co: true, st: true, fb: true, hh: true };
 let parkedCartFilter = ""; // Suchtext für "Geparkte Verkaufslisten" (nach Kundenname)
 
 // Kommissionierung: Lagerort, an dem gerade gepickt wird. Bestimmt sowohl
@@ -1475,15 +1485,16 @@ function parseCSV(text) {
 
 // ── VIEWS ─────────────────────────────────────────────────────────────────
 function renderView() {
-  ["prep","merkliste","preise","warehouse","sales","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
+  ["prep","merkliste","preise","warehouse","fehlmengen","sales","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
   qs(`#view-${currentView}`).style.display = "block";
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === currentView));
-  if (currentView === "prep")       renderPrep();
-  if (currentView === "merkliste")  renderMerklisteView();
-  if (currentView === "preise")     renderPreise();
-  if (currentView === "warehouse")  renderWarehouse();
-  if (currentView === "sales")      renderSales();
-  if (currentView === "journal")    renderJournal();
+  if (currentView === "prep")        renderPrep();
+  if (currentView === "merkliste")   renderMerklisteView();
+  if (currentView === "preise")      renderPreise();
+  if (currentView === "warehouse")   renderWarehouse();
+  if (currentView === "fehlmengen")  renderFehlmengen();
+  if (currentView === "sales")       renderSales();
+  if (currentView === "journal")     renderJournal();
 }
 
 // ── AUTOCOMPLETE HELPER ───────────────────────────────────────────────────
@@ -3037,6 +3048,175 @@ async function applyBookingCorrection(sku, chainId, newQty, newRef) {
     "warn"
   );
   renderView();
+}
+
+// ── FEHLMENGEN (Supervisor + Planer) ───────────────────────────────────────
+// Zeigt alle geplanten Artikel, bei denen die noch offene Menge (Geplant −
+// bereits Gepickt) NICHT durch den verfügbaren Bestand in den aktuell
+// angehakten Lagern gedeckt ist. Bewusst gegen die offene Menge gerechnet,
+// nicht gegen die volle Planmenge - ein bereits fertig kommissionierter
+// Artikel gilt nicht als "fehlend", egal wie wenig davon noch im Lager liegt.
+const FEHLMENGE_LAGER = [
+  { key: "zl", label: "ZL" },
+  { key: "co", label: "CO" },
+  { key: "st", label: "ST" },
+  { key: "fb", label: "FB" },
+  { key: "hh", label: "HH" },
+];
+
+function renderFehlmengen() {
+  const wrap = qs("#view-fehlmengen");
+
+  const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
+
+  if (geplant.length === 0) {
+    wrap.innerHTML = `<div class="muted" style="text-align:center;padding:32px 0;">
+      <i class="ti ti-alert-triangle" style="font-size:36px;display:block;margin-bottom:10px;opacity:.4;"></i>
+      Noch keine Artikel geplant.<br>
+      <span style="font-size:12px;">Artikel in der Vorbereitung suchen und Menge setzen.</span>
+    </div>`;
+    return;
+  }
+
+  ensureDetailsLoaded(geplant.map(a => a.sku), () => renderFehlmengen());
+
+  const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
+  const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
+
+  wrap.innerHTML = `
+    <div class="filter-bar">
+      <div class="search-bar" style="margin-bottom:8px;">
+        <i class="ti ti-search"></i>
+        <input type="text" id="fehlmenge-search" placeholder="Name, SKU oder EAN …" value="${fehlmengeSearch}" />
+      </div>
+      <div class="ac-wrap">
+        <input type="text" id="fehlmenge-kategorie" placeholder="Kategorie …" value="${fehlmengeKategorie}" />
+        <div class="ac-dropdown" id="ac-fehlmenge-kategorie" style="display:none;"></div>
+      </div>
+      <div class="ac-wrap">
+        <input type="text" id="fehlmenge-lieferant" placeholder="Lieferant / Hersteller …" value="${fehlmengeLieferant}" />
+        <div class="ac-dropdown" id="ac-fehlmenge-lieferant" style="display:none;"></div>
+      </div>
+      <div style="grid-column:1/-1;">
+        <div class="muted" style="font-size:11px;margin-bottom:6px;">Lager in der Berechnung berücksichtigen</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;">
+          ${PICKORTE.map(p => `
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" class="fehlmenge-lager-cb" data-lager="${p.key}" ${fehlmengeLager[p.key] ? "checked" : ""} />
+              ${p.label}
+            </label>`).join("")}
+        </div>
+      </div>
+    </div>
+    <div id="fehlmenge-results"></div>
+  `;
+
+  makeAutocomplete(qs("#fehlmenge-kategorie"), qs("#ac-fehlmenge-kategorie"), () => allKategorien, val => {
+    fehlmengeKategorie = val; runFehlmengeSearch();
+  });
+  makeAutocomplete(qs("#fehlmenge-lieferant"), qs("#ac-fehlmenge-lieferant"), () => allLieferanten, val => {
+    fehlmengeLieferant = val; runFehlmengeSearch();
+  });
+  qs("#fehlmenge-search").addEventListener("input", e => { fehlmengeSearch = e.target.value; runFehlmengeSearch(); });
+  qs("#fehlmenge-kategorie").addEventListener("input", e => { fehlmengeKategorie = e.target.value; runFehlmengeSearch(); });
+  qs("#fehlmenge-lieferant").addEventListener("input", e => { fehlmengeLieferant = e.target.value; runFehlmengeSearch(); });
+  wrap.querySelectorAll(".fehlmenge-lager-cb").forEach(cb => cb.addEventListener("change", () => {
+    fehlmengeLager[cb.dataset.lager] = cb.checked;
+    runFehlmengeSearch();
+  }));
+
+  runFehlmengeSearch();
+}
+
+function runFehlmengeSearch() {
+  const resultsEl = qs("#fehlmenge-results");
+  if (!resultsEl) return;
+
+  const sq = fehlmengeSearch.trim().toLowerCase();
+  const sk = fehlmengeKategorie.trim().toLowerCase();
+  const sl = fehlmengeLieferant.trim().toLowerCase();
+
+  const rows = articles
+    .filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a))
+    .map(a => {
+      const geplant  = planned[a.sku] || 0;
+      const gepickt  = committed[a.sku] || 0;
+      const offen    = Math.max(0, geplant - gepickt);
+      const stocks   = a.stocks || {};
+      const verfuegbar = FEHLMENGE_LAGER.reduce((sum, l) => sum + (fehlmengeLager[l.key] ? (stocks[l.key] || 0) : 0), 0);
+      const fehlmenge = Math.max(0, offen - verfuegbar);
+      return { art: a, geplant, gepickt, offen, fehlmenge };
+    })
+    .filter(r => r.fehlmenge > 0)
+    .filter(r => {
+      const a = r.art;
+      if (sk && !(a.category||"").toLowerCase().includes(sk)) return false;
+      if (sl && !(a.supplier||"").toLowerCase().includes(sl)) return false;
+      if (sq) {
+        const tokens = sq.split(/\s+/).filter(Boolean);
+        const haystack = (a.name + " " + a.sku + " " + (a.ean||"")).toLowerCase();
+        if (!tokens.every(t => haystack.includes(t))) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b.fehlmenge - a.fehlmenge);
+
+  resultsEl.innerHTML = "";
+
+  if (rows.length === 0) {
+    resultsEl.innerHTML = `<div class="muted" style="text-align:center;padding:24px 0;">
+      <i class="ti ti-check" style="font-size:32px;display:block;margin-bottom:8px;opacity:.5;"></i>
+      Keine Fehlmengen für die aktuelle Auswahl.
+    </div>`;
+    return;
+  }
+
+  const info = document.createElement("div");
+  info.className = "muted";
+  info.style.cssText = "font-size:12px;margin-bottom:10px;";
+  info.textContent = `${rows.length} Artikel mit Fehlmenge · sortiert nach größter Fehlmenge zuerst`;
+  resultsEl.appendChild(info);
+
+  rows.forEach(r => resultsEl.appendChild(_buildFehlmengeCard(r)));
+}
+
+function _buildFehlmengeCard(r) {
+  const a = r.art;
+  const card = document.createElement("div");
+  card.className = "card";
+  card.style.borderColor = "var(--err)";
+
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;">
+      <div style="display:flex;gap:10px;min-width:0;">
+        ${imgTag(a, 44)}
+        <div style="min-width:0;">
+          <div style="font-size:14px;font-weight:500;">${a.name}</div>
+          <div class="muted" style="margin-top:2px;">${skuEanHTML(a.sku, a.ean)}</div>
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div style="font-size:20px;font-weight:500;color:var(--err);">-${r.fehlmenge}</div>
+        <div style="font-size:11px;color:var(--err);">${r.fehlmenge === 1 ? "fehlt" : "fehlen"}</div>
+      </div>
+    </div>
+    <div class="chip-row" style="margin-bottom:10px;">
+      <span class="badge info">Geplant: ${r.geplant}</span>
+      <span class="badge ok">Gepickt: ${r.gepickt}</span>
+      <span class="badge warn">Offen: ${r.offen}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;">
+      ${FEHLMENGE_LAGER.map(l => {
+        const active = fehlmengeLager[l.key];
+        const val = (a.stocks && a.stocks[l.key]) || 0;
+        return `<div style="background:${active ? "var(--info-bg)" : "var(--bg2)"};border-radius:var(--r);padding:6px;text-align:center;${active ? "" : "opacity:.5;"}">
+          <div style="font-size:10px;color:${active ? "var(--info)" : "var(--text2)"};">${l.label}</div>
+          <div style="font-size:13px;font-weight:500;color:${active ? "var(--info)" : "var(--text2)"};">${a._detailLoaded ? val : "…"}</div>
+        </div>`;
+      }).join("")}
+    </div>
+  `;
+  return card;
 }
 
 // ── WARENKORB-KERNFUNKTIONEN ───────────────────────────────────────────────
