@@ -398,7 +398,7 @@ let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut
 let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
 // Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
 // Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbzDIQ5EW6oSVPSXyxHyJv7aZ1Zd-Q1YYvsOsvmd7u-p-wX6rQr-a357NmaCxZWDDt4jhQ/exec"; // Zentrale Webhook-URL
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbw-zV8toYtDmpIZBIHOQgusVK7QPfxcj9su9alRmvhEqHD2kAzqSXkpdBnqW_8FgNKYxQ/exec"; // Zentrale Webhook-URL
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
@@ -484,6 +484,8 @@ let fehlmengeLieferant = "";
 // Standardmäßig alle Lager mitgezählt - Checkbox abwählen = dieses Lager
 // fließt nicht in die Fehlmengen-Berechnung ein.
 let fehlmengeLager = { zl: true, co: true, st: true, fb: true, hh: true };
+// Nachbestellt-Flag pro SKU: { sku: { value: bool, zeitstempel, benutzer } }
+let bestellt = {};
 let parkedCartFilter = ""; // Suchtext für "Geparkte Verkaufslisten" (nach Kundenname)
 
 // Kommissionierung: Lagerort, an dem gerade gepickt wird. Bestimmt sowohl
@@ -616,7 +618,7 @@ async function selectMesse(name) {
   applyMesseTheme(name);
   saveUIState();
   planned = {}; committed = {}; commitLog = {}; commitDone = {}; preise = {}; preisCodeCache = {};
-  carts = {}; activeCartUuid = null;
+  carts = {}; activeCartUuid = null; bestellt = {};
   showNotification(`Messe "${name}" ausgewählt`, "ok");
   await loadRemoteState(false);
   startAutoRefresh();
@@ -1059,6 +1061,20 @@ async function loadRemoteState(silent = false) {
     // gelöscht auf einem anderen Gerät), Zeiger zurücksetzen statt auf
     // einen unsichtbaren Korb zu zeigen.
     if (activeCartUuid && !carts[activeCartUuid]) activeCartUuid = null;
+
+    // Nachbestellt-Flags analog mergen (kürzlich lokal geänderte nicht durch
+    // noch nicht aktualisierten Server-Stand überschreiben lassen).
+    const serverBestellt = s.bestellt || {};
+    const mergedBestellt = {};
+    const allBestelltSkus = new Set([...Object.keys(serverBestellt), ...Object.keys(bestellt)]);
+    allBestelltSkus.forEach(sku => {
+      if (isProtected(sku) || serverBestellt[sku] === undefined) {
+        if (bestellt[sku] !== undefined) mergedBestellt[sku] = bestellt[sku];
+      } else {
+        mergedBestellt[sku] = serverBestellt[sku];
+      }
+    });
+    bestellt = mergedBestellt;
 
     if (!silent) showNotification("Stand aktualisiert");
     renderView();
@@ -3182,22 +3198,34 @@ function runFehlmengeSearch() {
 
 function _buildFehlmengeCard(r) {
   const a = r.art;
+  const b = bestellt[a.sku] || {};
+  const isBestellt = !!b.value;
+
   const card = document.createElement("div");
   card.className = "card";
-  card.style.borderColor = "var(--err)";
+  card.style.borderColor = isBestellt ? "var(--border)" : "var(--err)";
+  if (isBestellt) card.style.background = "var(--bg2)";
+
+  const mengeColor = isBestellt ? "var(--text2)" : "var(--err)";
+  const badgeCls   = isBestellt ? "" : ""; // Badges bleiben informativ, nur gedämpft via Karten-Hintergrund
+
+  const bestelltZeit = b.zeitstempel ? parseServerTimestamp(b.zeitstempel) : null;
+  const bestelltLabel = bestelltZeit
+    ? bestelltZeit.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+    : "";
 
   card.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;">
       <div style="display:flex;gap:10px;min-width:0;">
         ${imgTag(a, 44)}
         <div style="min-width:0;">
-          <div style="font-size:14px;font-weight:500;">${a.name}</div>
+          <div style="font-size:14px;font-weight:500;color:${isBestellt ? "var(--text2)" : "var(--text)"};">${a.name}</div>
           <div class="muted" style="margin-top:2px;">${skuEanHTML(a.sku, a.ean)}</div>
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
-        <div style="font-size:20px;font-weight:500;color:var(--err);">-${r.fehlmenge}</div>
-        <div style="font-size:11px;color:var(--err);">${r.fehlmenge === 1 ? "fehlt" : "fehlen"}</div>
+        <div style="font-size:20px;font-weight:500;color:${mengeColor};">-${r.fehlmenge}</div>
+        <div style="font-size:11px;color:${mengeColor};">${r.fehlmenge === 1 ? "fehlt" : "fehlen"}</div>
       </div>
     </div>
     <div class="chip-row" style="margin-bottom:10px;">
@@ -3205,7 +3233,7 @@ function _buildFehlmengeCard(r) {
       <span class="badge ok">Gepickt: ${r.gepickt}</span>
       <span class="badge warn">Offen: ${r.offen}</span>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;">
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:10px;">
       ${FEHLMENGE_LAGER.map(l => {
         const active = fehlmengeLager[l.key];
         const val = (a.stocks && a.stocks[l.key]) || 0;
@@ -3215,7 +3243,20 @@ function _buildFehlmengeCard(r) {
         </div>`;
       }).join("")}
     </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding-top:10px;border-top:0.5px solid var(--border);">
+      <input type="checkbox" class="fehlmenge-bestellt-cb" ${isBestellt ? "checked" : ""} style="width:16px;height:16px;" />
+      Nachbestellt${isBestellt && bestelltLabel ? ` <span class="muted">· ${bestelltLabel}</span>` : ""}
+    </label>
   `;
+
+  card.querySelector(".fehlmenge-bestellt-cb").addEventListener("change", e => {
+    const value = e.target.checked;
+    bestellt[a.sku] = { value, zeitstempel: new Date().toISOString(), benutzer: currentUser };
+    touchSku(a.sku);
+    sendWebhook("BESTELLT_SET", { sku: a.sku, ean: a.ean, artName: a.name, art: a, value });
+    runFehlmengeSearch();
+  });
+
   return card;
 }
 
@@ -4055,6 +4096,9 @@ function sendWebhook(action, data) {
       payload.cartUuid = data.cartUuid;
       payload.items    = data.items || [];
       payload.kunde    = data.kunde || {};
+      break;
+    case "BESTELLT_SET":
+      payload.value = !!data.value;
       break;
   }
 
