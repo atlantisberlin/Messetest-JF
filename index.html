@@ -497,6 +497,10 @@ let whLieferant  = "";
 let whSearch     = "";
 let whView       = "pick"; // "pick" | "history"
 let whHistorySearch = "";
+// Zentrallager-Vorrang: in Filialen (nicht Zentrallager) standardmäßig nur
+// Artikel zeigen, die im Zentrallager bereits auf 0 sind - so wird ZL immer
+// zuerst leergeräumt, statt dass Filialen parallel dieselben Artikel picken.
+let whHideIfZlStock = true;
 
 let refreshTimer = null;
 
@@ -751,7 +755,7 @@ function attachQtyHandler(inp, getSku, getArt, onSave) {
 function saveUIState() {
   const s = {
     activeCartUuid,
-    messeLabel, WEBHOOK_URL, currentUser, whPickort, whKategorie, whLieferant, whSearch,
+    messeLabel, WEBHOOK_URL, currentUser, whPickort, whKategorie, whLieferant, whSearch, whHideIfZlStock,
     merklisteCollapsed, masterCollapsed
   };
   try { localStorage.setItem("messetool_ui", JSON.stringify(s)); } catch(e){}
@@ -771,6 +775,7 @@ function loadUIState() {
     whKategorie = src.whKategorie || "";
     whLieferant = src.whLieferant || "";
     whSearch    = src.whSearch    || "";
+    whHideIfZlStock = src.whHideIfZlStock !== undefined ? src.whHideIfZlStock : true;
     if (src.merklisteCollapsed) merklisteCollapsed = src.merklisteCollapsed;
     if (src.masterCollapsed)    masterCollapsed    = src.masterCollapsed;
   } catch(e){}
@@ -2597,6 +2602,26 @@ function renderWarehouse() {
     </div>`;
   wrap.appendChild(filterWrap);
 
+  // Zentrallager-Vorrang: nur relevant, wenn gerade eine Filiale (nicht ZL
+  // selbst) gepickt wird. Standardmäßig aktiv, damit Zentrallager immer
+  // zuerst leergeräumt wird, statt dass Filialen parallel dieselben
+  // Artikel picken, die eigentlich aus dem Zentrallager kommen sollen.
+  if (whPickort && whPickort !== "zl") {
+    const zlFilterWrap = document.createElement("label");
+    zlFilterWrap.className = "filter-toggle";
+    zlFilterWrap.style.marginBottom = "14px";
+    zlFilterWrap.innerHTML = `
+      <input type="checkbox" id="wh-hide-zl" ${whHideIfZlStock ? "checked" : ""} />
+      Nur zeigen, wenn im Zentrallager nicht mehr vorrätig
+    `;
+    wrap.appendChild(zlFilterWrap);
+    zlFilterWrap.querySelector("#wh-hide-zl").addEventListener("change", e => {
+      whHideIfZlStock = e.target.checked;
+      saveUIState();
+      renderWarehouseResultsBody(resultsWrap);
+    });
+  }
+
   // Eigener Container für Statistik + Kartenliste: Suchfeld tippt nur hier
   // hinein neu, ohne sich selbst (oder die Filterfelder) neu zu erzeugen -
   // sonst geht bei jedem Zeichen der Fokus verloren (gleicher Fehler wie
@@ -2638,9 +2663,16 @@ function renderWarehouseResultsBody(resultsWrap) {
   const ws = whSearch.trim().toLowerCase();
   const wk = whKategorie.trim().toLowerCase();
   const wl = whLieferant.trim().toLowerCase();
+  const zlFilterAktiv = whHideIfZlStock && whPickort !== "zl";
   const locationFiltered = locationAll.filter(a => {
     if (wk && !(a.category||"").toLowerCase().includes(wk)) return false;
     if (wl && !(a.supplier||"").toLowerCase().includes(wl)) return false;
+    // Zentrallager-Vorrang: Artikel, die im Zentrallager noch (irgendeinen)
+    // Bestand haben, blenden wir in Filialen aus - erst wenn ZL für diese
+    // SKU auf 0 ist, soll die Filiale picken. _detailLoaded noch nicht
+    // geladen? Dann lieber anzeigen statt fälschlich auszublenden, bis die
+    // echten Lagerdaten da sind.
+    if (zlFilterAktiv && a._detailLoaded && (a.stocks?.zl || 0) > 0) return false;
     if (ws) {
       const tokens = ws.split(/\s+/).filter(Boolean);
       const haystack = (a.name + " " + a.sku + " " + (a.ean||"")).toLowerCase();
@@ -2661,7 +2693,7 @@ function renderWarehouseResultsBody(resultsWrap) {
     return;
   }
   if (toCommit.length === 0) {
-    const filterActive = ws || wk || wl;
+    const filterActive = ws || wk || wl || zlFilterAktiv;
     resultsWrap.innerHTML = `<div style="text-align:center;padding:32px 0;" class="muted">
       <i class="ti ti-packages" style="font-size:40px;display:block;margin-bottom:12px;opacity:.5;"></i>
       Keine offenen Artikel${filterActive ? " für diesen Filter" : ""} mit Bestand in <strong>${pickInfo.label}</strong>.<br>
