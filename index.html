@@ -29,8 +29,6 @@
       }
     }
     body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:15px;color:var(--text);background:var(--bg3);min-height:100vh;}
-    /* Mobile-first: #app bleibt schmal (Verkauf/Kommission werden primär am Handy genutzt).
-       Ab Tablet-Breite (≥720px) wächst der Container, damit Vorbereitung mehr Platz bekommt. */
     #app{width:100%;max-width:480px;margin:0 auto;background:var(--bg);min-height:100vh;}
     @media(min-width:720px){
       #app{max-width:900px;}
@@ -38,7 +36,6 @@
     @media(min-width:1200px){
       #app{max-width:1180px;}
     }
-    /* Auf breiteren Screens links/rechts einen dezenten Rand statt Kante-zu-Kante */
     @media(min-width:720px){
       body{padding:0;}
       #app{border-left:0.5px solid var(--border);border-right:0.5px solid var(--border);}
@@ -69,7 +66,6 @@
     .notif-err{background:var(--err-bg);color:var(--err);}
     #settings-panel{display:none;padding:12px 16px;border-bottom:0.5px solid var(--border);background:var(--bg2);}
     #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-sales,#view-journal,#view-fehlmengen{display:none;}
-    /* Lade-Overlay */
     #loading-overlay{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;}
     #loading-overlay.hidden{display:none;}
     .loading-spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--info);border-radius:50%;animation:spin .8s linear infinite;}
@@ -84,77 +80,46 @@
     .divider{height:0.5px;background:var(--border);margin:12px 0;}
     .chip-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
     .qty-control{display:flex;align-items:center;gap:6px;}
-    .qty-btn{display:none;} /* +/- Buttons ausgeblendet - nur Direkteingabe */
+    .qty-btn{display:none;}
     .qty-inp{width:64px;text-align:center;padding:6px 8px;font-size:15px;font-weight:500;border-radius:var(--r);border:1.5px solid var(--border2);background:var(--bg);}
     .qty-inp:focus{border-color:var(--info);outline:none;background:var(--bg2);}
-    /* Spinner-Pfeile bei number-Input ausblenden */
     .qty-inp::-webkit-outer-spin-button,
     .qty-inp::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
     .qty-inp{-moz-appearance:textfield;}
-    /* Autocomplete */
     .ac-wrap{position:relative;margin-bottom:8px;}
     .ac-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--bg);border:0.5px solid var(--border2);border-radius:var(--r);z-index:100;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12);}
     .ac-item{padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:0.5px solid var(--border);}
     .ac-item:last-child{border-bottom:none;}
     .ac-item:hover,.ac-item.focused{background:var(--info-bg);color:var(--info);}
-    /* Filter-Bar */
     .filter-bar{background:var(--bg2);border-radius:var(--rl);padding:10px;margin-bottom:12px;}
     .filter-toggle{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;user-select:none;}
     .filter-toggle input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--info);}
-    /* Slave-Card */
     .slave-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--r);padding:10px;margin-bottom:6px;margin-left:12px;border-left:3px solid var(--info);}
-    /* Merkliste */
     .merkliste-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
     .merkliste-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);}
-    /* Pagination */
     .pagination{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;padding-top:12px;border-top:0.5px solid var(--border);}
-
-    /* Kopier-Buttons hinter SKU/EAN: klein, aber mit ausreichend Klickfläche
-       für Touch (Tablet/Handy), ohne den Zeilenfluss zu sprengen. */
     .copy-field{display:inline-flex;align-items:center;gap:2px;}
     .copy-btn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:4px;color:var(--text2);cursor:pointer;font-size:12px;flex-shrink:0;}
     .copy-btn:hover{background:var(--bg2);color:var(--info);}
     .copy-btn:active{background:var(--info-bg);color:var(--info);}
-
-    /* ── RESPONSIVE (Tablet/Desktop) ──────────────────────────────────────
-       Vorbereitung & Kommission werden meist am Computer/Tablet genutzt →
-       hier ab 720px mehr Spalten & eine kompaktere, tabellenartigere Optik.
-       Verkauf bleibt bewusst schmal/einspaltig, da Verkäufer auf der Messe
-       überwiegend das Smartphone nutzen. */
     @media(min-width:720px){
-      /* Grössere Klickflächen sind auf Touch/Tablet weiterhin sinnvoll,
-         Layout darf aber mehr Spalten nutzen. */
       .content-wrap{padding:16px 24px;}
-
-      /* Filterleiste der Vorbereitung: Suche/Lieferant/Kategorie/Checkbox nebeneinander */
       .filter-bar{display:grid;grid-template-columns:1.4fr 1fr 1fr auto;gap:10px;align-items:center;padding:12px 14px;}
       .filter-bar .search-bar,
       .filter-bar .ac-wrap{margin-bottom:0;}
       .filter-bar .filter-toggle{margin-top:0;white-space:nowrap;}
-
-      /* Trefferliste Vorbereitung als Grid statt gestapelter Liste */
       #prep-results{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;align-items:start;}
       #prep-results > .muted{grid-column:1/-1;}
       #prep-results .card{margin-bottom:0;}
-
-      /* Kommissionierungsliste ebenfalls als Grid */
       #wh-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;align-items:start;}
       #wh-items .card{margin-bottom:0;}
-
-      /* Preisliste (Verkauf) ebenfalls als Grid, analog Vorbereitung */
       #preisliste-results{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;align-items:start;}
       #preisliste-results > .muted{grid-column:1/-1;}
       #preisliste-results .card{margin-bottom:0;}
-
-      /* Varianten in der Detailansicht (Vorbereitung) als Grid */
       #detail-slaves{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;}
       #detail-slaves .slave-card{margin-bottom:0;margin-left:0;}
-
-      /* Merkliste: Master-Gruppen pro Kategorie als Grid statt gestapelter Liste */
       .merkliste-group-wrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;align-items:start;margin-bottom:10px;}
       .merkliste-group-wrap > div{margin-bottom:0 !important;}
-
-      /* Tabs nicht über die volle Breite strecken, sondern kompakt am linken Rand */
       .tabs{justify-content:flex-start;}
       .tab{flex:0 0 auto;padding:10px 22px;font-size:12px;}
       .tab i{font-size:18px;}
@@ -165,22 +130,14 @@
       #preisliste-results{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));}
       .merkliste-group-wrap{grid-template-columns:repeat(auto-fill,minmax(360px,1fr));}
     }
-
-    /* Verkaufslisten (Kundenlisten) bleiben bewusst schmal/einspaltig, da
-       Verkäufer dafür überwiegend das Smartphone nutzen - gilt NUR für
-       diese Unteransicht, nicht für die Preisliste (die soll die volle
-       Breite wie Vorbereitung/Kommission nutzen können). */
     @media(min-width:720px){
       .sales-listen-wrap{max-width:480px;margin:0 auto;}
     }
-
-    /* ── LOGIN-OVERLAY ─────────────────────────────────────────────────── */
     #login-overlay{position:fixed;inset:0;background:var(--bg);z-index:1000;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:32px;}
     #login-overlay.visible{display:flex;}
     .login-pin-input{width:180px;text-align:center;font-size:26px;letter-spacing:10px;padding:12px 10px;border-radius:var(--r);border:1.5px solid var(--border2);background:var(--bg);color:var(--text);}
     .login-pin-input:focus{outline:none;border-color:var(--info);}
     #login-status{font-size:13px;min-height:18px;text-align:center;}
-    /* Settings: PIN-Verwaltung nur für Supervisor sichtbar (per JS ein-/ausgeblendet) */
     #settings-pins{display:none;margin-top:14px;padding-top:14px;border-top:0.5px solid var(--border);}
     #settings-pins .pin-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
     #settings-pins .pin-row label{flex:0 0 90px;font-size:12px;color:var(--text2);}
@@ -207,16 +164,11 @@
   <div id="login-status"></div>
 </div>
 <div id="app">
-  <!-- Messe-Auswahl Dialog -->
   <div id="messe-dialog" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:998;align-items:center;justify-content:center;padding:20px;">
     <div style="background:var(--bg);border-radius:12px;padding:20px;width:100%;max-width:360px;max-height:80vh;overflow-y:auto;">
       <div style="font-weight:600;font-size:16px;margin-bottom:4px;">Messe auswählen</div>
       <div class="muted" style="font-size:13px;margin-bottom:16px;">Wähle eine bestehende Messe oder lege eine neue an.</div>
       <div id="messe-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;"></div>
-      <!-- Messen anlegen/umbenennen geht seit v9 nur noch über die
-           Einstellungen (Supervisor) - inkl. Farbdefinition. So entsteht
-           nie mehr eine Messe ohne Farbzuordnung, und die Liste bleibt
-           unter Kontrolle einer Person statt "jeder tippt mal einen Namen". -->
       <div id="messe-dialog-manage" style="display:none;border-top:0.5px solid var(--border);padding-top:16px;">
         <button id="btn-manage-messen" class="btn btn-info" style="width:100%;">
           <i class="ti ti-settings"></i> Messen verwalten (Einstellungen)
@@ -225,9 +177,6 @@
     </div>
   </div>
 
-  <!-- Benutzername-Dialog: erscheint zwingend nach jedem Login, solange
-       kein gültiger Name gesetzt ist. Kein Abbrechen-Button in diesem Fall -
-       "Unbekannt" darf nicht mehr als dauerhafter Wert entstehen können. -->
   <div id="user-dialog" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:998;align-items:center;justify-content:center;padding:20px;">
     <div style="background:var(--bg);border-radius:12px;padding:20px;width:100%;max-width:340px;">
       <div style="font-weight:600;font-size:16px;margin-bottom:4px;">Wer bist du?</div>
@@ -261,10 +210,6 @@
     </div>
   </div>
 
-  <!-- Aktuelle Messe deutlich hervorgehoben: volle Breite, große Schrift,
-       Farbe kommt aus der (optionalen) Supervisor-Konfiguration - siehe
-       applyMesseTheme(). Ohne Konfiguration Standardfarbe (var(--info)/weiß),
-       damit bestehende Messen ohne Farbeintrag nicht "kaputt" aussehen. -->
   <div style="padding:8px 16px 0;">
     <button id="btn-switch-messe" style="width:100%;background:var(--info);color:#fff;border:none;border-radius:14px;padding:12px 16px;font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;">
       <span style="display:flex;align-items:center;gap:9px;min-width:0;overflow:hidden;">
@@ -275,7 +220,6 @@
     </button>
   </div>
 
-  <!-- Benutzer (links) + Sync-Status (rechts), unter dem Messe-Banner -->
   <div style="padding:6px 16px 0;display:flex;align-items:center;justify-content:space-between;">
     <button id="btn-change-user" style="background:none;border:none;padding:0;display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);cursor:pointer;">
       <i class="ti ti-user-circle" style="font-size:14px;"></i>
@@ -376,11 +320,6 @@
 </div>
 
 <script>
-// ── KONFIGURATION ──────────────────────────────────────────────────────────
-// Spaltenreihenfolge im Google Sheet (0-basiert, Zeile 1 = Header):
-// SKU · EAN · NAME · KATEGORIE · EKNETTO · UVPBRUTTO · VKBRUTTO · MINDESTVK · LIEFERANT
-// · IMAGE_GROSS · IMAGE_NORMAL · IMAGE_MINI · PRODUCTS_ID · MASTER_ID
-// · ZL · CO · ST · FB · HH
 const COL = {
   SKU:0, EAN:1, NAME:2, KATEGORIE:3, EKNETTO:4, UVPBRUTTO:5, VKBRUTTO:6, MINDESTVK:7, LIEFERANT:8,
   IMAGE_GROSS:9, IMAGE_NORMAL:10, IMAGE_MINI:11,
@@ -390,26 +329,17 @@ const COL = {
 
 const qs = s => document.querySelector(s);
 
-// ── STATE ──────────────────────────────────────────────────────────────────
-let articles    = [];   // alle Artikel aus Google Sheets (im Speicher)
-let artBySku    = {};   // { sku → article } – schneller Lookup
-let slavesBySku = {};   // { master_sku → [slave_article, ...] } – aufgebaut nach dem Laden
+let articles    = [];
+let artBySku    = {};
+let slavesBySku = {};
 
-let messeLabel  = "";   // aktuelle Messe – leer = noch keine ausgewählt
-// Zentrale Konfiguration – hier einmalig eintragen, gilt für alle Geräte
-// Bei Webhook-Änderung: nur diese Zeile anpassen und neu deployen
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycby5v4wXquyaLMsm1hfiRagTLyvbsARGtj2z25VXyNKGQQhpHsXjaLdOlk3s7ry_GkTp/exec"; // Zentrale Webhook-URL
+let messeLabel  = "";
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycby5v4wXquyaLMsm1hfiRagTLyvbsARGtj2z25VXyNKGQQhpHsXjaLdOlk3s7ry_GkTp/exec";
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
-// Vom Supervisor gepflegte Messen-Konfiguration (Name + Farben), vom
-// Server geladen - siehe loadMessenConfig()/applyMesseTheme().
 let messenConfig = [];
 
-// ── AUTH (Rollen & PIN-Login) ───────────────────────────────────────────
-// Token+Rolle liegen bewusst in sessionStorage (nicht localStorage):
-// überlebt einen normalen Reload innerhalb desselben Tabs/derselben
-// PWA-Instanz, verlangt aber bei echtem Neustart/neuem Tab erneutes Login.
 const TAB_PERMISSIONS = {
   supervisor: ["prep", "merkliste", "preise", "warehouse", "fehlmengen", "sales", "journal"],
   planer:     ["prep", "merkliste", "preise", "warehouse", "fehlmengen", "sales"],
@@ -432,13 +362,10 @@ function clearAuth() {
   sessionStorage.removeItem("messetool_token");
   sessionStorage.removeItem("messetool_role");
 }
-// Hängt das Auth-Token an eine GET-URL an (Backend verlangt es für jede
-// Aktion außer login/ping)
 function authUrl(url) {
   return url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(getAuthToken());
 }
 
-// Prep-Filter-State
 let prepPage      = 0;
 let prepSearch    = "";
 let prepLieferant = "";
@@ -452,46 +379,30 @@ let planned    = {};
 let committed  = {};
 let commitLog  = {};
 let commitDone = {};
-let preise     = {}; // { sku: { min, messe } } - Messemindestpreis / Messepreis, ganze Euro
+let preise     = {};
 let preisSearch    = "";
 let preisLieferant = "";
 let preisKategorie = "";
-let preisNurOhne   = false; // Checkbox "nur Artikel ohne hinterlegten Messepreis" - Default: aus, wie in der Vorbereitung
-// ── WARENKORB-VERKAUFSLISTEN (neu, ersetzt die alte Dropdown-Auswahl) ─────
-let carts = {};           // { uuid: {status, kunde:{name,strasse,plzOrt,kontakt,notiz}, items:[...]} } - vom Server
-let activeCartUuid = null; // aktuell aktiver Warenkorb (Entwurf)
+let preisNurOhne   = false;
+let carts = {};
+let activeCartUuid = null;
 
-// ── PREISLISTE (Unteransicht im Verkauf-Tab) ──────────────────────────────
-let salesSubView          = "listen"; // "listen" | "preisliste"
+let salesSubView          = "listen";
 let preislisteSearch      = "";
 let preislisteLieferant   = "";
 let preislisteKategorie   = "";
 let preislisteNurMessestand = false;
 let preislistePage        = 0;
-let preislisteStockOpen   = {}; // { sku: bool } - aufgeklappte Lagerbestände
-// Verschlüsselter Referenz-Code pro SKU (Ziffern des Mindestpreises
-// umgedreht + zweistellige Zufallszahl, analog zur Sheet-Formel). Wird
-// EINMAL pro Sitzung erzeugt und dann konstant gehalten - würde sich der
-// Code bei jedem Re-Render ändern, könnte ein aufmerksamer Kunde durch
-// Vergleich zweier Ansichten sofort erkennen, welche Ziffern die
-// Zufallsziffern sind und welche der echte, umgedrehte Preis.
+let preislisteStockOpen   = {};
 let preisCodeCache = {};
 
-// ── FEHLMENGEN (Supervisor + Planer) ───────────────────────────────────────
 let fehlmengeSearch    = "";
 let fehlmengeKategorie = "";
 let fehlmengeLieferant = "";
-// Standardmäßig alle Lager mitgezählt - Checkbox abwählen = dieses Lager
-// fließt nicht in die Fehlmengen-Berechnung ein.
 let fehlmengeLager = { zl: true, co: true, st: true, fb: true, hh: true };
-// Nachbestellt-Flag pro SKU: { sku: { value: bool, zeitstempel, benutzer } }
 let bestellt = {};
-let parkedCartFilter = ""; // Suchtext für "Geparkte Verkaufslisten" (nach Kundenname)
+let parkedCartFilter = "";
 
-// Kommissionierung: Lagerort, an dem gerade gepickt wird. Bestimmt sowohl
-// welche Artikel angezeigt werden (nur mit Bestand > 0 an diesem Ort) als
-// auch den Vorschlagswert für Menge (verfügbarer Bestand dort) und den
-// Box-Nummer-Präfix.
 const PICKORTE = [
   { key: "zl", label: "Zentrallager", prefix: "ZL-", link: "https://www.wassersport-logistics.de/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
   { key: "co", label: "Coppi",        prefix: "CO-", link: "https://www.atlantis-coppi.de/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
@@ -499,24 +410,17 @@ const PICKORTE = [
   { key: "fb", label: "Freiburg",     prefix: "FB-", link: "https://www.tauchcenter-freiburg.de/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
   { key: "hh", label: "Hamburg",      prefix: "HH-", link: "https://www.atlantis-tauchshop.hamburg/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
 ];
-let whPickort = ""; // "" = noch nicht gewählt
+let whPickort = "";
 
-// Kommission: Kategorie-/Lieferanten-Filter (analog zur Vorbereitung) und
-// Umschalter zwischen "Picken" (offene Kartenliste) und "Historie"
-// (bereits kommissionierte Buchungen, editierbar/löschbar).
 let whKategorie  = "";
 let whLieferant  = "";
 let whSearch     = "";
-let whView       = "pick"; // "pick" | "history"
+let whView       = "pick";
 let whHistorySearch = "";
-// Zentrallager-Vorrang: in Filialen (nicht Zentrallager) standardmäßig nur
-// Artikel zeigen, die im Zentrallager bereits auf 0 sind - so wird ZL immer
-// zuerst leergeräumt, statt dass Filialen parallel dieselben Artikel picken.
 let whHideIfZlStock = true;
 
 let refreshTimer = null;
 
-// ── MESSEN-FARBKONFIGURATION (Supervisor-verwaltet, seit v9) ──────────────
 async function loadMessenConfig() {
   if (!WEBHOOK_URL || !getAuthToken()) return;
   try {
@@ -531,8 +435,6 @@ function getMesseColors(name) {
   return found ? { bg: found.bg, fg: found.fg } : { bg: "#185fa5", fg: "#ffffff" };
 }
 
-// Färbt das Messe-Banner gemäß Konfiguration (oder Standardfarbe, falls
-// für diese Messe keine hinterlegt ist - z.B. weil sie vor v9 angelegt wurde).
 function applyMesseTheme(name) {
   const btn = qs("#btn-switch-messe");
   if (!btn) return;
@@ -541,13 +443,6 @@ function applyMesseTheme(name) {
   btn.style.color = c.fg;
 }
 
-// Holt beide Quellen und führt sie zusammen: Farbkonfiguration (Supervisor-
-// gepflegt) zuerst, danach "verwaiste" Messen mit Buchungsdaten in BigQuery,
-// die (noch) nicht in der Konfiguration stehen - z.B. weil sie vor dieser
-// Erweiterung angelegt wurden (wie "Interdive 2026"). Wird sowohl vom
-// Auswahl-Dialog als auch von "Messen verwalten" in den Einstellungen
-// genutzt, damit eine bereits aktive Messe in BEIDEN Stellen auftaucht und
-// nicht nur auswählbar, sondern auch nachträglich einfärbbar ist.
 async function fetchMergedMessenList() {
   await loadMessenConfig();
   let bqMessen = [];
@@ -569,7 +464,6 @@ async function fetchMergedMessenList() {
   return merged;
 }
 
-// ── MESSE-DIALOG ──────────────────────────────────────────────────────────
 async function showMesseDialog() {
   const dialog     = qs("#messe-dialog");
   const listEl     = qs("#messe-list");
@@ -632,11 +526,6 @@ qs("#btn-manage-messen").addEventListener("click", () => {
   openSettingsToMessen();
 });
 
-// ── MESSEN-KONFIGURATION IN DEN EINSTELLUNGEN (nur Supervisor) ───────────
-// list: Ergebnis von fetchMergedMessenList() - enthält auch bereits aktive
-// Messen ohne eigene Farbe (Default-Blau), damit der Supervisor sie hier
-// direkt nachträglich einfärben/übernehmen kann, statt sie neu abtippen
-// zu müssen.
 function renderMessenConfigRows(list) {
   const wrap = qs("#messen-config-list");
   wrap.innerHTML = "";
@@ -688,8 +577,6 @@ async function saveMessenConfigToServer() {
   }
 }
 
-// Öffnet die Einstellungen direkt bei "Messen verwalten" (z.B. aus dem
-// Messe-Auswahl-Dialog heraus aufgerufen).
 async function openSettingsToMessen() {
   const panel = qs("#settings-panel");
   panel.style.display = "block";
@@ -704,7 +591,6 @@ async function openSettingsToMessen() {
   qs("#settings-messen")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-// ── UUID GENERATOR ────────────────────────────────────────────────────────
 function genUUID() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
     const r = Math.random() * 16 | 0;
@@ -712,13 +598,6 @@ function genUUID() {
   });
 }
 
-// BigQuery liefert TIMESTAMP-Werte über die REST-API häufig als
-// Unix-Epoch-Sekunden (inkl. Bruchteil), teils in wissenschaftlicher
-// Notation, z.B. "1.787069425435E9" statt einem lesbaren Datum. Diese
-// Funktion erkennt das und rechnet korrekt in ein JS-Date um (das
-// Unix-Epoch ist in Sekunden, JS erwartet Millisekunden -> ×1000).
-// Fällt auf normales Datums-Parsing zurück für ISO-Strings (z.B. unsere
-// eigenen, lokal mit toISOString() erzeugten Zeitstempel).
 function parseServerTimestamp(ts) {
   if (ts === null || ts === undefined || ts === "") return null;
   if (typeof ts === "number") return new Date(ts * 1000);
@@ -731,14 +610,13 @@ function parseServerTimestamp(ts) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// Qty-Input Handler: speichert bei Enter oder Verlassen des Feldes
 function attachQtyHandler(inp, getSku, getArt, onSave) {
   let lastVal = parseInt(inp.value) || 0;
 
   const save = function() {
     const s   = getSku();
     const neu = Math.max(0, parseInt(this.value) || 0);
-    if (neu === lastVal) return; // keine Änderung
+    if (neu === lastVal) return;
     const old = lastVal;
     lastVal   = neu;
     if (neu === 0) delete planned[s]; else planned[s] = neu;
@@ -747,7 +625,6 @@ function attachQtyHandler(inp, getSku, getArt, onSave) {
     if (onSave) onSave(neu);
   };
 
-  // Beim Fokus: 0 automatisch markieren → sofort überschreibbar
   inp.addEventListener("focus", function() {
     if (this.value === "0" || this.value === "") {
       this.select();
@@ -763,7 +640,6 @@ function attachQtyHandler(inp, getSku, getArt, onSave) {
 
 
 
-// ── PERSISTENZ (nur UI-State und Einstellungen) ───────────────────────────
 function saveUIState() {
   const s = {
     activeCartUuid,
@@ -780,7 +656,6 @@ function loadUIState() {
     if (!src) return;
     activeCartUuid = src.activeCartUuid || null;
     messeLabel  = src.messeLabel  || "";
-    // WEBHOOK_URL_DEFAULT hat immer Vorrang vor gespeichertem Wert
     WEBHOOK_URL = WEBHOOK_URL_DEFAULT || src.WEBHOOK_URL || "";
     currentUser = src.currentUser || "";
     whPickort   = src.whPickort   || "";
@@ -795,19 +670,15 @@ function loadUIState() {
 
 function saveState() { saveUIState(); }
 
-// ── STATE VOM SCRIPT LADEN ────────────────────────────────────────────────
-// ── SYNC-QUEUE (Offline-First) ────────────────────────────────────────────
-// Änderungen werden zuerst lokal gequeued, dann gebündelt synchronisiert.
-// Der angezeigte State ist immer: serverState + noch ausstehende Queue-Einträge.
 const SYNC_QUEUE_KEY     = "messetool_sync_queue";
-const SYNC_BATCH_MS      = 6000;   // alle 6s ausstehende Einträge senden
-const SYNC_DEBOUNCE_MS   = 2000;   // 2s nach letzter Änderung an einer SKU warten
-const AUTO_REFRESH_MS    = 30000;
+const SYNC_BATCH_MS      = 6000;
+const SYNC_DEBOUNCE_MS   = 2000;
+const AUTO_REFRESH_MS    = 90000; // v18-Update: 30s -> 90s, zusaetzlicher Kontingent-Puffer fuer die Tage bis zur Messe (siehe Chat-Notiz zum urlfetch-Limit)
 
-let syncQueue       = [];     // [{ localId, action, payload, debounceKey, createdAt }]
-let syncStatus       = "idle"; // idle | pending | syncing | error
+let syncQueue       = [];
+let syncStatus       = "idle";
 let syncTimer        = null;
-let debounceTimers    = {};    // { debounceKey: timeoutHandle }
+let debounceTimers    = {};
 let lastSyncError     = null;
 
 function loadSyncQueue() {
@@ -820,11 +691,8 @@ function persistSyncQueue() {
   try { localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(syncQueue)); } catch(e){}
 }
 
-// Fügt eine Änderung zur Queue hinzu. debounceKey gruppiert schnelle Folgeänderungen
-// an derselben SKU/Aktion (z.B. mehrfaches Klicken auf +) zu einem Eintrag.
 function queueChange(action, payload, debounceKey, explicitUuid) {
   if (debounceKey) {
-    // Bestehenden Eintrag mit gleichem debounceKey ersetzen statt neuen anzulegen
     const idx = syncQueue.findIndex(q => q.debounceKey === debounceKey && !q.sending);
     if (idx >= 0) {
       syncQueue[idx] = { ...syncQueue[idx], action, payload, createdAt: Date.now() };
@@ -844,7 +712,6 @@ function queueChange(action, payload, debounceKey, explicitUuid) {
   scheduleDebouncedSync(debounceKey);
 }
 
-// Wartet SYNC_DEBOUNCE_MS nach der letzten Änderung an diesem Key, dann synct
 function scheduleDebouncedSync(debounceKey) {
   const key = debounceKey || "__immediate__";
   if (debounceTimers[key]) clearTimeout(debounceTimers[key]);
@@ -854,7 +721,6 @@ function scheduleDebouncedSync(debounceKey) {
   }, debounceKey ? SYNC_DEBOUNCE_MS : 300);
 }
 
-// Sendet alle ausstehenden (nicht gerade sendenden) Queue-Einträge als Batch
 async function syncNow() {
   if (!WEBHOOK_URL) return;
   const pending = syncQueue.filter(q => !q.sending);
@@ -865,10 +731,6 @@ async function syncNow() {
   updateSyncStatusUI();
 
   try {
-    // Apps Script Web-Apps senden bei doPost keine CORS-Header zurück,
-    // daher no-cors verwenden. Wir können die Antwort nicht lesen, aber
-    // ein erfolgreicher fetch() ohne Netzwerkfehler bedeutet der Request
-    // ist beim Server angekommen (Google empfängt und verarbeitet ihn serverseitig).
     await fetch(WEBHOOK_URL, {
       method:  "POST",
       mode:    "no-cors",
@@ -876,8 +738,6 @@ async function syncNow() {
       body:    (() => { const b = JSON.stringify({ action: "BATCH", token: getAuthToken(), messe: messeLabel, user: currentUser, items: pending.map(q => ({ action: q.action, ...q.payload, uuid: q.localId })) }); console.log("SYNC BODY:", b); return b; })(),
     });
 
-    // Optimistisch: kein Netzwerkfehler = wahrscheinlich angekommen.
-    // Erfolgreich gesendete Einträge aus der Queue entfernen.
     const sentIds = new Set(pending.map(q => q.localId));
     syncQueue = syncQueue.filter(q => !sentIds.has(q.localId));
     persistSyncQueue();
@@ -889,18 +749,15 @@ async function syncNow() {
     pending.forEach(q => q.sending = false);
     persistSyncQueue();
     if (lastSyncError !== e.message) {
-      // Nur bei neuer/erster Fehlermeldung eine Notification zeigen (kein Spam bei Wiederholungen)
       showNotification("Sync-Fehler: " + e.message, "err");
     }
     lastSyncError = e.message;
     syncStatus = "error";
-    // Erneuter Versuch nach kurzer Pause
     setTimeout(syncNow, 8000);
   }
   updateSyncStatusUI();
 }
 
-// Periodischer Sicherheitsnetz-Sync (falls Debounce-Timer durch Tab-Wechsel verloren ging)
 function startSyncLoop() {
   stopSyncLoop();
   syncTimer = setInterval(syncNow, SYNC_BATCH_MS);
@@ -909,8 +766,6 @@ function stopSyncLoop() {
   if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
 }
 
-// Wendet ausstehende Queue-Einträge auf einen frisch geladenen Server-State an,
-// damit lokale Änderungen nie durch einen Refresh überschrieben werden.
 function applyPendingQueueToState() {
   syncQueue.forEach(q => {
     const sku = q.payload.sku;
@@ -953,25 +808,14 @@ function updateSyncStatusUI() {
   }
 }
 
-// ── STATE VOM SERVER LADEN (mit Queue-Schutz) ─────────────────────────────
-// Kurzzeitiger Schutz gegen BigQuery-Streaming-Lesefenster: Nach einer
-// lokalen Änderung an einem Artikel kann es einige Sekunden dauern, bis
-// eine erneute Abfrage die Änderung wirklich sieht. Ohne diesen Schutz
-// würde der automatische 30-Sekunden-Refresh eine gerade gemachte
-// Korrektur kurzzeitig wieder "rückgängig" erscheinen lassen, bis
-// BigQuery aufgeholt hat.
 const TOUCH_PROTECTION_MS = 25000;
-let recentlyTouched = {}; // sku -> Zeitpunkt der letzten lokalen Änderung
+let recentlyTouched = {};
 function touchSku(sku) { recentlyTouched[sku] = Date.now(); }
 function isProtected(sku) {
   const t = recentlyTouched[sku];
   return !!t && (Date.now() - t) < TOUCH_PROTECTION_MS;
 }
 
-// Erwartet {chains:[...], events:[...]}. Falls der Server (z.B. wegen einer
-// noch nicht aktiven Bereitstellung) eine andere Form liefert - etwa das
-// alte flache Array von vor dieser Erweiterung - wird sicher auf einen
-// leeren Zustand zurückgefallen statt die App abstürzen zu lassen.
 function normalizeCommitLogEntry(raw) {
   if (raw && Array.isArray(raw.chains) && Array.isArray(raw.events)) return raw;
   return { chains: [], events: [] };
@@ -1001,13 +845,6 @@ async function loadRemoteState(silent = false) {
     allSkus.forEach(sku => {
       const serverHasSku = serverCommitted[sku] !== undefined || serverCommitLog[sku] !== undefined;
       if (isProtected(sku) || !serverHasSku) {
-        // Entweder kürzlich lokal geändert (siehe Kommentar oben), ODER der
-        // Server liefert für diesen Artikel gerade nichts - was an der
-        // BigQuery-Streaming-Verzögerung liegen kann, nicht zwingend daran,
-        // dass es dort wirklich nichts mehr gibt. In beiden Fällen: lieber
-        // den zuletzt bekannten lokalen Stand behalten als ihn fälschlich
-        // zu löschen. Der Server muss AKTIV etwas liefern, damit er den
-        // lokalen Stand überschreiben darf.
         if (committed[sku] !== undefined) mergedCommitted[sku] = committed[sku];
         if (commitLog[sku] !== undefined) mergedCommitLog[sku] = normalizeCommitLogEntry(commitLog[sku]);
       } else {
@@ -1018,8 +855,6 @@ async function loadRemoteState(silent = false) {
     committed = mergedCommitted;
     commitLog = mergedCommitLog;
 
-    // Ausstehende lokale Änderungen erneut anwenden, damit sie nicht
-    // durch den frisch geladenen Server-Stand überschrieben werden
     applyPendingQueueToState();
 
     commitDone = {};
@@ -1027,10 +862,6 @@ async function loadRemoteState(silent = false) {
       if ((committed[sku] || 0) >= planned[sku]) commitDone[sku] = true;
     });
 
-    // Preise analog committed mergen: lokal kürzlich gespeicherte Preise
-    // (touchSku) nicht durch einen noch nicht aktualisierten Server-Stand
-    // überschreiben lassen (gleiches BigQuery-Streaming-Zeitfenster wie bei
-    // Kommissionierungen).
     const serverPreise = s.preise || {};
     const mergedPreise = {};
     const allPreisSkus = new Set([...Object.keys(serverPreise), ...Object.keys(preise)]);
@@ -1043,9 +874,6 @@ async function loadRemoteState(silent = false) {
     });
     preise = mergedPreise;
 
-    // Warenkörbe analog mergen - kürzlich lokal geänderte (touchSku mit der
-    // Cart-UUID als Schlüssel) nicht durch einen noch nicht aktualisierten
-    // Server-Stand überschreiben lassen.
     const serverCarts = s.carts || {};
     const mergedCarts = {};
     const allCartUuids = new Set([...Object.keys(serverCarts), ...Object.keys(carts)]);
@@ -1057,13 +885,8 @@ async function loadRemoteState(silent = false) {
       }
     });
     carts = mergedCarts;
-    // Falls der aktive Warenkorb serverseitig nicht mehr existiert (z.B.
-    // gelöscht auf einem anderen Gerät), Zeiger zurücksetzen statt auf
-    // einen unsichtbaren Korb zu zeigen.
     if (activeCartUuid && !carts[activeCartUuid]) activeCartUuid = null;
 
-    // Nachbestellt-Flags analog mergen (kürzlich lokal geänderte nicht durch
-    // noch nicht aktualisierten Server-Stand überschreiben lassen).
     const serverBestellt = s.bestellt || {};
     const mergedBestellt = {};
     const allBestelltSkus = new Set([...Object.keys(serverBestellt), ...Object.keys(bestellt)]);
@@ -1084,12 +907,6 @@ async function loadRemoteState(silent = false) {
   }
 }
 
-// Auto-Refresh alle 30 Sekunden - überspringt einen Zyklus, solange gerade
-// ein Eingabefeld fokussiert ist. Ohne diese Schutzklausel würde der
-// vollständige innerHTML-Rebuild in renderView() jede noch nicht
-// gespeicherte Eingabe (z.B. in der Messepreise-Ansicht) mitten im Tippen
-// löschen, weil die Felder aus dem zuletzt gespeicherten Zustand neu
-// befüllt werden, nicht aus dem aktuellen DOM-Wert.
 function startAutoRefresh() {
   stopAutoRefresh();
   refreshTimer = setInterval(() => {
@@ -1103,30 +920,20 @@ function stopAutoRefresh() {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
 }
 
-// ── NOTIFICATIONS ─────────────────────────────────────────────────────────
 let notifTimer;
 function showNotification(msg, type="ok") {
   const area = qs("#notification-area");
   clearTimeout(notifTimer);
   area.innerHTML = `<div class="notification notif-${type}">${msg}</div>`;
-  // Fehler länger anzeigen (8s), sonst 3s
   notifTimer = setTimeout(() => area.innerHTML="", type === "err" ? 8000 : 3000);
 }
 
-// ── KOPIER-HELFER (SKU/EAN) ────────────────────────────────────────────────
-// Event-Delegation reicht hier nicht ohne Weiteres, da Karten häufig einen
-// eigenen Klick-Handler zum Öffnen der Detailansicht haben (Bubbling würde
-// den sonst zusätzlich auslösen) - daher inline onclick mit
-// event.stopPropagation(), analog zum bereits bestehenden Muster bei den
-// Mengenfeldern ("onclick=\"event.stopPropagation()\"").
 async function copyToClipboard(value, label) {
   if (!value) return;
   try {
     await navigator.clipboard.writeText(value);
     showNotification(`${label || "Wert"} kopiert: ${value}`, "ok");
   } catch(e) {
-    // Fallback für ältere WebViews/PWA-Kontexte ohne Clipboard-API bzw.
-    // ohne erteilte Berechtigung.
     try {
       const ta = document.createElement("textarea");
       ta.value = value;
@@ -1143,8 +950,6 @@ async function copyToClipboard(value, label) {
   }
 }
 
-// Baut die SKU/EAN-Zeile mit Kopier-Icons. sku ist praktisch nie leer,
-// ean kann fehlen (dann wird nur die SKU angezeigt).
 function skuEanHTML(sku, ean) {
   let html = `<span class="copy-field">${sku}<i class="ti ti-copy copy-btn" title="SKU kopieren" onclick="event.stopPropagation();copyToClipboard('${sku}','SKU')"></i></span>`;
   if (ean) {
@@ -1153,11 +958,6 @@ function skuEanHTML(sku, ean) {
   return html;
 }
 
-// Variante ausschließlich für die Kommission-"Picken"-Kartenliste: die SKU
-// wird zusätzlich als Link zum Lagersystem des gerade gewählten Pickorts
-// (whPickort) dargestellt - {ARTIKELNUMMER} in der jeweiligen URL wird
-// durch die SKU ersetzt. Öffnet in einem neuen Tab (target=_blank), damit
-// der App-Zustand (Sync-Queue, Filter) nicht verloren geht.
 function skuEanHTMLForPick(sku, ean) {
   const pickInfo = PICKORTE.find(p => p.key === whPickort);
   const url = pickInfo && pickInfo.link ? pickInfo.link.replace("{ARTIKELNUMMER}", encodeURIComponent(sku)) : null;
@@ -1171,14 +971,6 @@ function skuEanHTMLForPick(sku, ean) {
   return html;
 }
 
-// ── USER-DIALOG ───────────────────────────────────────────────────────────
-// Fragt den Benutzernamen ab. WICHTIG: anders als früher wird bei Abbruch
-// oder leerer Eingabe NICHT mehr automatisch "Unbekannt" dauerhaft
-// gespeichert - das war die Ursache dafür, dass in den Logs viele Zeilen
-// mit "Unbekannt" auftauchten (einmal weggeklickt/leer gelassen, blieb der
-// Wert für immer stehen, weil die alte Prüfung "if (currentUser) return"
-// auch bei "Unbekannt" als bereits gesetzt galt). Jetzt gilt nur ein
-// echter, nicht-leerer Name als gültig gesetzt.
 function ensureUser() {
   if (currentUser && currentUser !== "Unbekannt") { updateUserBadge(); return; }
   showUserDialog();
@@ -1187,9 +979,6 @@ function ensureUser() {
 function showUserDialog() {
   const hasValidName = !!(currentUser && currentUser !== "Unbekannt");
   qs("#inp-user-name").value = hasValidName ? currentUser : "";
-  // Abbrechen nur anbieten, wenn bereits ein gültiger Name existiert
-  // (dann ist es eine "Name ändern"-Aktion) - beim allerersten Mal / nach
-  // Logout gibt es bewusst keinen Ausweg ohne Eingabe.
   qs("#btn-cancel-user").style.display = hasValidName ? "" : "none";
   qs("#user-dialog").style.display = "flex";
   qs("#inp-user-name").focus();
@@ -1203,7 +992,7 @@ function saveUserName() {
   const val = qs("#inp-user-name").value.trim();
   if (!val) {
     qs("#inp-user-name").focus();
-    return; // kein leerer Name möglich - Dialog bleibt offen
+    return;
   }
   currentUser = val;
   saveUIState();
@@ -1217,7 +1006,6 @@ function updateUserBadge() {
   el.textContent = (currentUser && currentUser !== "Unbekannt") ? currentUser : "Kein Name gesetzt";
 }
 
-// ── LOGIN / ROLLEN ─────────────────────────────────────────────────────────
 function requireLogin() {
   hideLoading();
   qs("#login-overlay").classList.add("visible");
@@ -1264,24 +1052,15 @@ function logout() {
   stopAutoRefresh();
   stopSyncLoop();
   clearAuth();
-  // Benutzername bewusst NICHT übernehmen: ein Gerät kann an der Messe
-  // zwischen mehreren Personen weitergereicht werden - jede neue Anmeldung
-  // (= neue Session) soll den Namen erneut abfragen, statt den Namen der
-  // vorherigen Person unbemerkt weiterzuführen.
   currentUser = "";
   saveUIState();
   updateUserBadge();
   location.hash = "";
-  // App-internen Zustand zurücksetzen, damit die nächste Rolle nicht
-  // versehentlich fremde Sicht-States (z.B. offene Detailansicht) erbt
   prepDetailSku = null;
   merklisteDetailSku = null;
   requireLogin();
 }
 
-// Blendet Tabs, Settings-Zahnrad und Reload-Button je nach Rolle ein/aus.
-// WICHTIG: Das ist reine UI-Bequemlichkeit. Die eigentliche Durchsetzung
-// passiert serverseitig (Backend lehnt unerlaubte Schreibaktionen ab).
 function applyRolePermissions(role) {
   const allowedTabs = TAB_PERMISSIONS[role] || [];
   document.querySelectorAll(".tab").forEach(t => {
@@ -1291,14 +1070,11 @@ function applyRolePermissions(role) {
   qs("#btn-settings").style.display = role === "supervisor" ? "" : "none";
   qs("#role-badge-label").textContent = role;
 
-  // Falls der aktuell aktive Tab für diese Rolle nicht erlaubt ist,
-  // auf den ersten erlaubten Tab springen (z.B. Verkauf landet direkt in "sales")
   if (!allowedTabs.includes(currentView)) {
     currentView = allowedTabs[0] || "prep";
   }
 }
 
-// ── LADE-OVERLAY ──────────────────────────────────────────────────────────
 function setLoadingStep(msg, pct) {
   const stepEl = qs("#loading-step");
   const barEl  = qs("#loading-bar");
@@ -1314,25 +1090,19 @@ function hideLoading() {
   if (ol) ol.classList.add("hidden");
 }
 
-// ── ARTIKEL-CACHE ──────────────────────────────────────────────────────────
-// Artikel-Cache: 32K Basisdaten zu groß für Browser-Storage (sessionStorage/localStorage beide ~5MB)
-// Daher kein persistenter Cache – Basisdaten werden bei jedem Start neu geladen (~5 Sekunden)
 function getCachedArticles() { return null; }
-function setCachedArticles(data) { /* kein Cache */ }
+function setCachedArticles(data) { }
 function clearArticleCache() {
-  // Alten Cache aus früheren Versionen aufräumen
   try { localStorage.removeItem("messetool_articles_v2"); } catch(e){}
   try { localStorage.removeItem("messetool_articles_v1"); } catch(e){}
   try { sessionStorage.removeItem("messetool_articles_v2"); } catch(e){}
 }
 function getCacheInfo() { return null; }
 
-// ── ARTIKEL LADEN (BigQuery via Apps Script) ──────────────────────────────
 async function loadArticles(forceReload = false) {
   showLoading();
 
   try {
-    // Cache prüfen
     if (!forceReload) {
       setLoadingStep("Prüfe Artikel-Cache…", 10);
       await sleep(200);
@@ -1347,7 +1117,6 @@ async function loadArticles(forceReload = false) {
       }
     }
 
-    // BigQuery via Apps Script laden (nur Basisdaten: SKU/EAN/Name/Kategorie/Lieferant/MasterID)
     if (!WEBHOOK_URL) {
       hideLoading();
       showNotification("Bitte zuerst die Webhook-URL in den Einstellungen hinterlegen.", "warn");
@@ -1399,7 +1168,6 @@ function buildArticleLookups(rawArticles) {
   artBySku    = {};
   slavesBySku = {};
   articles.forEach(a => {
-    // Detail-Felder mit Defaults initialisieren, werden bei Bedarf nachgeladen
     if (a.price === undefined) {
       a.costPrice = 0; a.uvp = 0; a.price = 0; a.minPrice = 0;
       a.image = ""; a.stocks = { zl:0, co:0, st:0, fb:0, hh:0 }; a.stock = 0;
@@ -1417,14 +1185,11 @@ function buildArticleLookups(rawArticles) {
   qs("#btn-reload").style.display = "flex";
 }
 
-// ── DETAILDATEN NACHLADEN (Preise, Lager, Bild) ───────────────────────────
-// Cache verhindert wiederholtes Nachladen bereits bekannter SKUs
-const detailLoadingInFlight = new Set(); // verhindert parallele Doppel-Requests
+const detailLoadingInFlight = new Set();
 
 async function ensureDetailsLoaded(skus, onUpdate) {
   if (!WEBHOOK_URL || skus.length === 0) return;
 
-  // Nur SKUs die noch nicht geladen sind und nicht gerade laden
   const missing = skus.filter(sku => {
     const art = artBySku[sku];
     return art && !art._detailLoaded && !detailLoadingInFlight.has(sku);
@@ -1434,7 +1199,6 @@ async function ensureDetailsLoaded(skus, onUpdate) {
   missing.forEach(sku => detailLoadingInFlight.add(sku));
 
   try {
-    // BigQuery IN-Klausel verträgt max. 200 SKUs pro Anfrage -> in Batches aufteilen
     const batchSize = 150;
     for (let i = 0; i < missing.length; i += batchSize) {
       const batch = missing.slice(i, i + batchSize);
@@ -1473,12 +1237,10 @@ async function ensureDetailsLoaded(skus, onUpdate) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// Hilfsfunktionen Master/Slave
 function isMaster(art)   { return !!slavesBySku[art.sku]; }
 function getSlavesOf(art){ return slavesBySku[art.sku] || []; }
 function getMasterOf(art){ return art.masterId ? (artBySku[art.masterId] || null) : null; }
 
-// parseCSV bleibt für eventuelle Kompatibilität
 function parseCSV(text) {
   const rows = [];
   let row = [], cell = "", inQ = false;
@@ -1499,7 +1261,6 @@ function parseCSV(text) {
   return rows;
 }
 
-// ── VIEWS ─────────────────────────────────────────────────────────────────
 function renderView() {
   ["prep","merkliste","preise","warehouse","fehlmengen","sales","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
   qs(`#view-${currentView}`).style.display = "block";
@@ -1513,7 +1274,6 @@ function renderView() {
   if (currentView === "journal")     renderJournal();
 }
 
-// ── AUTOCOMPLETE HELPER ───────────────────────────────────────────────────
 function makeAutocomplete(inputEl, dropEl, getItems, onSelect) {
   let focusIdx = -1;
   inputEl.addEventListener("input", () => {
@@ -1551,7 +1311,6 @@ function makeAutocomplete(inputEl, dropEl, getItems, onSelect) {
   inputEl.addEventListener("blur", () => setTimeout(() => dropEl.style.display = "none", 150));
 }
 
-// ── VORBEREITUNG ──────────────────────────────────────────────────────────
 function renderPrep() {
   const wrap = qs("#view-prep");
 
@@ -1567,13 +1326,11 @@ function renderPrep() {
     return;
   }
 
-  // Detailansicht
   if (prepDetailSku) {
     renderPrepDetail(wrap);
     return;
   }
 
-  // Eindeutige Lieferanten & Kategorien für Autocomplete
   const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
   const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
 
@@ -1601,7 +1358,6 @@ function renderPrep() {
     <div id="prep-pagination"></div>
   `;
 
-  // Autocomplete
   makeAutocomplete(qs("#prep-lieferant"), qs("#ac-lieferant"), () => allLieferanten, val => {
     prepLieferant = val; prepPage = 0; runPrepSearch();
   });
@@ -1609,7 +1365,6 @@ function renderPrep() {
     prepKategorie = val; prepPage = 0; runPrepSearch();
   });
 
-  // Filter-Events
   qs("#prep-search").addEventListener("input", e => { prepSearch = e.target.value; prepPage = 0; runPrepSearch(); });
   qs("#prep-lieferant").addEventListener("input", e => { prepLieferant = e.target.value; prepPage = 0; runPrepSearch(); });
   qs("#prep-kategorie").addEventListener("input", e => { prepKategorie = e.target.value; prepPage = 0; runPrepSearch(); });
@@ -1618,10 +1373,9 @@ function renderPrep() {
   runPrepSearch();
 }
 
-// ── MERKLISTE (eigener Tab) ────────────────────────────────────────────────
 let merklisteDetailSku = null;
-let merklisteCollapsed = {}; // { [kategorie]: bool } – zugeklappte Kategorien
-let masterCollapsed    = {}; // { [masterSku]: bool } – zugeklappte Master-Karten
+let merklisteCollapsed = {};
+let masterCollapsed    = {};
 
 function renderMerklisteView() {
   const wrap = qs("#view-merkliste");
@@ -1631,7 +1385,6 @@ function renderMerklisteView() {
     return;
   }
 
-  // Alle geplanten Nicht-Master-Artikel
   const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
 
   wrap.innerHTML = "";
@@ -1645,7 +1398,6 @@ function renderMerklisteView() {
     return;
   }
 
-  // Gesamt-Statistik
   const totalPlanned = geplant.length;
   const totalDone    = geplant.filter(a => commitDone[a.sku]).length;
   const hdr = document.createElement("div");
@@ -1655,12 +1407,9 @@ function renderMerklisteView() {
     <span class="muted">${totalDone}/${totalPlanned} komm.</span>`;
   wrap.appendChild(hdr);
 
-  // Details für alle geplanten Artikel sicherstellen (Merkliste ist meist klein genug)
   const plannedSkus = geplant.map(a => a.sku);
   ensureDetailsLoaded(plannedSkus, () => renderMerklisteView());
 
-  // Artikel nach Kategorie gruppieren
-  // Nur erste Kategorie verwenden (vor dem ersten |)
   const firstCat = str => (str || "Sonstige").split(" | ")[0].trim() || "Sonstige";
   const byCategory = {};
   geplant.forEach(slave => {
@@ -1669,18 +1418,15 @@ function renderMerklisteView() {
     byCategory[cat].add(slave);
   });
 
-  // Kategorien alphabetisch sortieren
   const categories = Object.keys(byCategory).sort((a, b) => a.localeCompare(b, "de"));
 
   categories.forEach(cat => {
     const slaves = [...byCategory[cat]];
 
-    // Kategorie-Statistik – live berechnet
     const catDone  = slaves.filter(a => (planned[a.sku] || 0) > 0 && (committed[a.sku] || 0) >= (planned[a.sku] || 0)).length;
     const catOffen = slaves.filter(a => !((committed[a.sku] || 0) >= (planned[a.sku] || 0))).length;
     const catCollapsed = merklisteCollapsed[cat] || false;
 
-    // Kategorie-Header
     const catHdr = document.createElement("div");
     catHdr.style.cssText = "display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg2);border-radius:var(--r);cursor:pointer;margin-bottom:6px;border:0.5px solid var(--border);";
     catHdr.innerHTML = `
@@ -1701,13 +1447,11 @@ function renderMerklisteView() {
 
     if (catCollapsed) return;
 
-    // Container für alle Master-Gruppen dieser Kategorie (wird ab Tablet-Breite zum Grid)
     const catGroupWrap = document.createElement("div");
     catGroupWrap.className = "merkliste-group-wrap";
     wrap.appendChild(catGroupWrap);
 
-    // Slaves nach Master gruppieren
-    const masterGroups = {}; // { masterSku|"__solo__sku": [slave, ...] }
+    const masterGroups = {};
     slaves.forEach(slave => {
       const master = getMasterOf(slave);
       const key = master ? master.sku : `__solo__${slave.sku}`;
@@ -1715,7 +1459,6 @@ function renderMerklisteView() {
       masterGroups[key].slaves.push(slave);
     });
 
-    // Master-Gruppen sortieren: nach Master-Name
     const groupKeys = Object.keys(masterGroups).sort((a, b) => {
       const na = masterGroups[a].master ? masterGroups[a].master.name : (masterGroups[a].slaves[0]?.name || "");
       const nb = masterGroups[b].master ? masterGroups[b].master.name : (masterGroups[b].slaves[0]?.name || "");
@@ -1730,11 +1473,9 @@ function renderMerklisteView() {
 }
 
 function _renderMasterGroup(wrap, master, plannedSlaves) {
-  // Alle Slaves des Masters (geplant + nicht geplant)
   const allSlaves = master ? getSlavesOf(master) : plannedSlaves;
   const unplannedSlaves = allSlaves.filter(a => !(planned[a.sku] || 0));
 
-  // Statistik für geplante Slaves – live berechnet
   const totalQty  = plannedSlaves.reduce((s, a) => s + (planned[a.sku] || 0), 0);
   const totalComm = plannedSlaves.reduce((s, a) => s + (committed[a.sku] || 0), 0);
   const allDone   = plannedSlaves.every(a => (planned[a.sku] || 0) > 0 && (committed[a.sku] || 0) >= (planned[a.sku] || 0));
@@ -1749,7 +1490,6 @@ function _renderMasterGroup(wrap, master, plannedSlaves) {
   const card = document.createElement("div");
   card.style.cssText = "background:var(--bg);border:0.5px solid var(--border);border-radius:var(--rl);margin-bottom:8px;overflow:hidden;";
 
-  // Master-Header
   const masterHdr = document.createElement("div");
   masterHdr.style.cssText = "display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;";
   masterHdr.innerHTML = `
@@ -1767,7 +1507,6 @@ function _renderMasterGroup(wrap, master, plannedSlaves) {
   });
   card.appendChild(masterHdr);
 
-  // Fortschrittsbalken
   const progDiv = document.createElement("div");
   progDiv.style.cssText = "display:flex;gap:6px;padding:0 12px 10px;align-items:center;";
   progDiv.innerHTML = `
@@ -1782,11 +1521,9 @@ function _renderMasterGroup(wrap, master, plannedSlaves) {
 
   if (isCollapsed) { wrap.appendChild(card); return; }
 
-  // Slaves-Bereich
   const slavesWrap = document.createElement("div");
   slavesWrap.style.cssText = "border-top:0.5px solid var(--border);";
 
-  // Geplante Slaves zuerst – sortiert: fertig zuerst, dann offen
   const sortedPlanned = [...plannedSlaves].sort((a, b) => {
     const aDone = (planned[a.sku] || 0) > 0 && (committed[a.sku] || 0) >= (planned[a.sku] || 0);
     const bDone = (planned[b.sku] || 0) > 0 && (committed[b.sku] || 0) >= (planned[b.sku] || 0);
@@ -1802,7 +1539,6 @@ function _renderMasterGroup(wrap, master, plannedSlaves) {
 
   sortedPlanned.forEach(slave => _renderSlaveRow(slavesWrap, slave, true));
 
-  // Ungeplante Slaves darunter
   if (unplannedSlaves.length > 0) {
     const divUnplanned = document.createElement("div");
     divUnplanned.style.cssText = "font-size:10px;color:var(--text2);padding:5px 12px;background:var(--bg2);border-top:0.5px solid var(--border);border-bottom:0.5px solid var(--border);";
@@ -1820,9 +1556,7 @@ function _renderSlaveRow(container, slave, isPlanned) {
   const sku    = slave.sku;
   const qty    = planned[sku] || 0;
   const comm   = committed[sku] || 0;
-  // done live berechnen: committed >= planned (und qty > 0), nicht nur auf commitDone-Flag verlassen
   const done   = qty > 0 && comm >= qty;
-  // commitDone konsistent halten
   if (done) commitDone[sku] = true;
   else delete commitDone[sku];
   const offen  = Math.max(0, qty - comm);
@@ -1834,7 +1568,6 @@ function _renderSlaveRow(container, slave, isPlanned) {
   const nameColor = done ? "#27500a" : (isPlanned && !done ? "#633806" : "var(--text)");
   const metaColor = "var(--text2)";
 
-  // Bild + Info
   const topRow = document.createElement("div");
   topRow.style.cssText = "display:flex;gap:8px;align-items:flex-start;";
   topRow.innerHTML = `
@@ -1849,12 +1582,10 @@ function _renderSlaveRow(container, slave, isPlanned) {
     </div>`;
   row.appendChild(topRow);
 
-  // Unterste Zeile: volle Breite
   const bottomRow = document.createElement("div");
   bottomRow.style.cssText = "margin-top:8px;";
 
   if (done) {
-    // Rückgängig-Button
     const undoBtn = document.createElement("button");
     undoBtn.style.cssText = "display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:7px 10px;border-radius:var(--r);border:0.5px solid var(--ok);background:var(--ok-bg);color:var(--ok);font-size:12px;cursor:pointer;";
     undoBtn.innerHTML = `<i class="ti ti-arrow-back-up" style="font-size:14px;"></i> Kommissionierung rückgängig`;
@@ -1870,7 +1601,6 @@ function _renderSlaveRow(container, slave, isPlanned) {
     });
     bottomRow.appendChild(undoBtn);
   } else {
-    // Qty-Control volle Breite
     const borderCol = isPlanned ? "var(--warn)" : "var(--border2)";
     const qtyWrap = document.createElement("div");
     qtyWrap.style.cssText = "display:flex;align-items:center;gap:6px;";
@@ -1891,9 +1621,6 @@ function _renderSlaveRow(container, slave, isPlanned) {
   container.appendChild(row);
 }
 
-// ── MESSEPREISE (eigener Tab, nur Supervisor/Planer) ──────────────────────
-// Speichert Mindestpreis/Messepreis für eine SKU: optimistisches lokales
-// Update + Touch-Schutz (siehe loadRemoteState) + Sync-Queue-Eintrag.
 async function savePreis(sku, art, minVal, messeVal) {
   preise[sku] = { min: minVal, messe: messeVal };
   touchSku(sku);
@@ -1908,7 +1635,6 @@ function hatVollstaendigenPreis(sku) {
 function renderPreise() {
   const wrap = qs("#view-preise");
 
-  // Alle für die Messe geplanten Nicht-Master-Artikel (analog Merkliste)
   const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
 
   if (geplant.length === 0) {
@@ -1920,9 +1646,6 @@ function renderPreise() {
     return;
   }
 
-  // EK/UVP/Akt. VK/Bild nachladen, falls noch nicht bekannt - explizit auch
-  // für die Master-SKUs selbst, sonst bleibt deren Bild im Gruppen-Header
-  // leer (Master werden aus "geplant" bewusst ausgefiltert, siehe oben).
   const masterSkus = [...new Set(geplant.map(a => getMasterOf(a)).filter(Boolean).map(m => m.sku))];
   ensureDetailsLoaded([...geplant.map(a => a.sku), ...masterSkus], () => renderPreise());
 
@@ -2000,7 +1723,6 @@ function runPreisSearch() {
   info.textContent = `${filtered.length} Artikel`;
   resultsEl.appendChild(info);
 
-  // Nach Master gruppieren, damit "für alle Varianten übernehmen" möglich ist
   const masterGroups = {};
   filtered.forEach(slave => {
     const master = getMasterOf(slave);
@@ -2038,7 +1760,6 @@ function _renderPreisGroup(wrap, master, slaves) {
       </div>`;
     card.appendChild(hdr);
 
-    // Sammel-Eingabe: gilt für alle Varianten dieser Master-Gruppe
     const bulkWrap = document.createElement("div");
     bulkWrap.style.cssText = "background:var(--bg2);border-radius:var(--r);padding:10px;margin-bottom:14px;";
     bulkWrap.innerHTML = `
@@ -2192,7 +1913,6 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
   return row;
 }
 
-// ── GETEILTE DETAILANSICHT (Prep + Merkliste nutzen dieselbe Funktion) ─────
 function renderDetailView(wrap, detailSku, onBack) {
   try {
     const art = articles.find(a => a.sku === detailSku);
@@ -2217,15 +1937,10 @@ function _renderDetailViewInner(wrap, art, onBack) {
 
   const qty = planned[art.sku] || 0;
 
-  // Alle Geschwister ermitteln:
-  // Falls der angeklickte Artikel selbst eine masterId hat → alle mit gleicher masterId
-  // Falls der angeklickte Artikel ein Master ist (hat Slaves) → alle seine Slaves
   let siblings = [];
   if (art.masterId) {
-    // Slave angeklickt → alle Artikel mit gleicher masterId (außer sich selbst)
     siblings = articles.filter(a => a.masterId === art.masterId && a.sku !== art.sku);
   } else if (isMaster(art)) {
-    // Master angeklickt → alle Slaves
     siblings = getSlavesOf(art);
   }
   siblings.sort((a, b) => a.name.localeCompare(b.name, "de"));
@@ -2239,7 +1954,6 @@ function _renderDetailViewInner(wrap, art, onBack) {
   backBtn.onclick = onBack;
   wrap.appendChild(backBtn);
 
-  // Angeklickten Artikel hervorgehoben anzeigen
   const mainCard = document.createElement("div");
   mainCard.style.cssText = "background:var(--info-bg);border:1.5px solid var(--info);border-radius:var(--rl);padding:12px;margin-bottom:12px;";
   mainCard.dataset.sku = art.sku;
@@ -2273,7 +1987,6 @@ function _renderDetailViewInner(wrap, art, onBack) {
     </div>`;
   wrap.appendChild(mainCard);
 
-  // Geschwister-Header
   if (siblings.length > 0) {
     const hdr = document.createElement("div");
     hdr.className = "merkliste-title";
@@ -2286,13 +1999,11 @@ function _renderDetailViewInner(wrap, art, onBack) {
   slavesWrap.id = "detail-slaves";
   wrap.appendChild(slavesWrap);
 
-  // Qty für angeklickten Artikel: Direkteingabe mit Enter/Blur
   const dQty = wrap.querySelector("#d-qty");
   if (dQty) {
     attachQtyHandler(dQty, () => art.sku, () => art, () => saveState());
   }
 
-  // Geschwister rendern
   siblings.forEach(sibling => {
     const sq     = planned[sibling.sku] || 0;
     const sc     = committed[sibling.sku] || 0;
@@ -2341,10 +2052,8 @@ function _renderDetailViewInner(wrap, art, onBack) {
     slavesWrap.appendChild(card);
   });
 
-  // Details für Hauptartikel + alle Geschwister nachladen
   const allSkusInView = [art.sku, ...siblings.map(s => s.sku)];
   ensureDetailsLoaded(allSkusInView, () => {
-    // Hauptkarte aktualisieren
     if (art._detailLoaded) {
       const vkEl  = mainCard.querySelector(".detail-price-vk");
       const minEl = mainCard.querySelector(".detail-price-min");
@@ -2353,7 +2062,6 @@ function _renderDetailViewInner(wrap, art, onBack) {
       if (minEl) minEl.textContent = fmtEur(art.minPrice);
       if (stEl)  stEl.innerHTML    = stockGrid(art.stocks, false);
     }
-    // Geschwister-Karten aktualisieren
     siblings.forEach(sibling => {
       if (!sibling._detailLoaded) return;
       const sCard = slavesWrap.querySelector(`.slave-card[data-sku="${sibling.sku}"]`);
@@ -2366,7 +2074,6 @@ function _renderDetailViewInner(wrap, art, onBack) {
   });
 }
 
-// ── SUCHERGEBNISSE (paginiert, Master ausgeblendet) ───────────────────────
 function runPrepSearch() {
   const resultsEl    = qs("#prep-results");
   const paginationEl = qs("#prep-pagination");
@@ -2387,14 +2094,12 @@ function runPrepSearch() {
   const sl = prepLieferant.trim().toLowerCase();
   const sk = prepKategorie.trim().toLowerCase();
 
-  // Master-Artikel komplett ausblenden
   const filtered = articles.filter(a => {
     if (isMaster(a)) return false;
     if (prepNurLager && a.stock <= 0) return false;
     if (sl && !a.supplier.toLowerCase().includes(sl)) return false;
     if (sk && !a.category.toLowerCase().includes(sk)) return false;
     if (sq) {
-      // Tokenbasiert: jedes Wort muss irgendwo in Name, SKU oder EAN vorkommen
       const tokens = sq.split(/\s+/).filter(Boolean);
       const haystack = (a.name + " " + a.sku + " " + a.ean).toLowerCase();
       if (!tokens.every(t => haystack.includes(t))) return false;
@@ -2460,13 +2165,11 @@ function runPrepSearch() {
         </div>
       </div>`;
 
-    // Klick auf Karte → Detailansicht (direkt die geklickte SKU)
     card.addEventListener("click", () => {
       prepDetailSku = art.sku;
       renderPrep();
     });
 
-    // Qty-Events: nur Direkteingabe mit Enter/Blur
     attachQtyHandler(
       card.querySelector(".qty-inp"),
       () => art.sku,
@@ -2480,7 +2183,6 @@ function runPrepSearch() {
     resultsEl.appendChild(card);
   });
 
-  // Pagination
   if (paginationEl) {
     paginationEl.innerHTML = "";
     if (totalPages <= 1) return;
@@ -2510,10 +2212,8 @@ function runPrepSearch() {
     paginationEl.appendChild(pg);
   }
 
-  // Detaildaten (Preis, Lager, Bild) für die sichtbaren Treffer nachladen
   const visibleSkus = pageItems.map(a => a.sku);
   ensureDetailsLoaded(visibleSkus, () => {
-    // Nur die betroffenen Karten aktualisieren, kein komplettes Re-Render
     pageItems.forEach(art => {
       if (!art._detailLoaded) return;
       const card = resultsEl.querySelector(`.card[data-sku="${art.sku}"]`);
@@ -2527,17 +2227,14 @@ function runPrepSearch() {
   });
 }
 
-// ── DETAILANSICHT (Prep) ──────────────────────────────────────────────────
 function renderPrepDetail(wrap) {
   renderDetailView(wrap, prepDetailSku, () => { prepDetailSku = null; renderPrep(); });
 }
 
-// ── KOMMISSIONIERUNG ──────────────────────────────────────────────────────
 function renderWarehouse() {
   const wrap = qs("#view-warehouse");
   wrap.innerHTML = `<p class="muted" style="margin-bottom:12px;">Artikel entnehmen & bestätigen. Artikel können auch wieder aus der Liste entfernt werden.</p>`;
 
-  // Pickort-Auswahl (immer sichtbar, damit man den Ort jederzeit wechseln kann)
   const pickWrap = document.createElement("div");
   pickWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;";
   PICKORTE.forEach(p => {
@@ -2559,7 +2256,6 @@ function renderWarehouse() {
   });
   wrap.appendChild(pickWrap);
 
-  // Umschalter: offene Pickliste vs. bereits erledigte Buchungen (editierbar)
   const viewToggle = document.createElement("div");
   viewToggle.style.cssText = "display:flex;gap:6px;margin-bottom:16px;";
   viewToggle.innerHTML = `
@@ -2574,22 +2270,10 @@ function renderWarehouse() {
     return;
   }
 
-  // Basis für die Statistik-Kachel: ALLE geplanten Artikel mit Bestand am
-  // gewählten Lagerort - AUCH bereits fertig kommissionierte. Wichtig: wenn
-  // man hier stattdessen von der Kartenliste (toCommit) ausgehen würde,
-  // verschwindet ein Artikel in dem Moment aus der Zählung, in dem er
-  // fertig wird - "Kommissioniert" würde dann strukturell nie über 0
-  // hinauskommen, weil fertige Artikel ja gerade deshalb aus der Karten-
-  // liste rausfallen sollen (Kommissionierung ist bereits abgeschlossen und
-  // muss dort keine Aktion mehr anbieten).
   const plannedAnywhere = articles.some(a => (planned[a.sku] || 0) > 0 && !commitDone[a.sku]);
   const locationAll = articles.filter(a =>
     (planned[a.sku] || 0) > 0 && (a.stocks?.[whPickort] || 0) > 0
   );
-  // Details (u.a. lagerortbezogener Bestand) nachladen, falls noch nicht
-  // bekannt - wichtig für Geräte, die ausschließlich mit der Rolle
-  // "kommission" laufen und nie durch Vorbereitung/Merkliste kommen, wo
-  // das sonst schon passiert.
   ensureDetailsLoaded(
     articles.filter(a => (planned[a.sku] || 0) > 0).map(a => a.sku),
     () => renderWarehouse()
@@ -2605,9 +2289,6 @@ function renderWarehouse() {
 
   const pickInfo = PICKORTE.find(p => p.key === whPickort);
 
-  // Namens-/SKU-/EAN-Suche (wie in der Vorbereitung) + Kategorie-/
-  // Lieferanten-Filter (z.B. "nur Tauchmasken" oder "nur Mares"). Wirkt
-  // auf Statistik UND Kartenliste gleichermaßen.
   const searchWrap = document.createElement("div");
   searchWrap.className = "search-bar";
   searchWrap.style.marginBottom = "8px";
@@ -2629,10 +2310,6 @@ function renderWarehouse() {
     </div>`;
   wrap.appendChild(filterWrap);
 
-  // Zentrallager-Vorrang: nur relevant, wenn gerade eine Filiale (nicht ZL
-  // selbst) gepickt wird. Standardmäßig aktiv, damit Zentrallager immer
-  // zuerst leergeräumt wird, statt dass Filialen parallel dieselben
-  // Artikel picken, die eigentlich aus dem Zentrallager kommen sollen.
   if (whPickort && whPickort !== "zl") {
     const zlFilterWrap = document.createElement("label");
     zlFilterWrap.className = "filter-toggle";
@@ -2649,11 +2326,6 @@ function renderWarehouse() {
     });
   }
 
-  // Eigener Container für Statistik + Kartenliste: Suchfeld tippt nur hier
-  // hinein neu, ohne sich selbst (oder die Filterfelder) neu zu erzeugen -
-  // sonst geht bei jedem Zeichen der Fokus verloren (gleicher Fehler wie
-  // vorhin bei den geparkten Verkaufslisten, hier an der ursprünglichen
-  // Stelle im Code behoben).
   const resultsWrap = document.createElement("div");
   wrap.appendChild(resultsWrap);
 
@@ -2675,9 +2347,6 @@ function renderWarehouse() {
   renderWarehouseResultsBody(resultsWrap);
 }
 
-// Baut nur Statistik-Kachel + Kartenliste der Kommission-Picken-Ansicht
-// (siehe Kommentar bei resultsWrap oben) - wird initial und bei jeder
-// Filteränderung neu aufgerufen, ohne Suchfeld/Filterfelder anzufassen.
 function renderWarehouseResultsBody(resultsWrap) {
   resultsWrap.innerHTML = "";
 
@@ -2694,11 +2363,6 @@ function renderWarehouseResultsBody(resultsWrap) {
   const locationFiltered = locationAll.filter(a => {
     if (wk && !(a.category||"").toLowerCase().includes(wk)) return false;
     if (wl && !(a.supplier||"").toLowerCase().includes(wl)) return false;
-    // Zentrallager-Vorrang: Artikel, die im Zentrallager noch (irgendeinen)
-    // Bestand haben, blenden wir in Filialen aus - erst wenn ZL für diese
-    // SKU auf 0 ist, soll die Filiale picken. _detailLoaded noch nicht
-    // geladen? Dann lieber anzeigen statt fälschlich auszublenden, bis die
-    // echten Lagerdaten da sind.
     if (zlFilterAktiv && a._detailLoaded && (a.stocks?.zl || 0) > 0) return false;
     if (ws) {
       const tokens = ws.split(/\s+/).filter(Boolean);
@@ -2708,8 +2372,6 @@ function renderWarehouseResultsBody(resultsWrap) {
     return true;
   });
 
-  // Kartenliste: nur die am gewählten Lagerort noch offenen Artikel -
-  // fertige verschwinden hier bewusst, brauchen keine Aktion mehr.
   const toCommit = locationFiltered.filter(a => !commitDone[a.sku]);
 
   if (!plannedAnywhere && locationAll.length === 0) {
@@ -2831,7 +2493,7 @@ function renderWarehouseResultsBody(resultsWrap) {
     const sku = b.dataset.sku;
     const art = articles.find(a => a.sku === sku);
     const chains = (commitLog[sku] && commitLog[sku].chains) || [];
-    const lastChain = chains[0]; // neueste Kette zuerst, siehe Backend-Sortierung
+    const lastChain = chains[0];
     const info = lastChain ? `${lastChain.qty}× (${lastChain.box || "ohne Box"})` : `${committed[sku] || 0}×`;
     if (!confirm(`Letzte Buchung von "${art.name}" rückgängig machen?\n${info}`)) return;
     if (!lastChain) {
@@ -2858,15 +2520,7 @@ function renderWarehouseResultsBody(resultsWrap) {
   }));
 }
 
-// ── KOMMISSIONIERUNGS-HISTORIE (editierbar) ────────────────────────────────
-// Zeigt ALLE bereits gebuchten Kommissionierungen (über alle Lagerorte
-// hinweg - bewusst nicht auf whPickort beschränkt, da man z.B. nach dem
-// Wechsel des Lagerorts trotzdem eine Buchung von vorhin korrigieren will).
-// Menge/Box lassen sich ändern, eine Buchung lässt sich vollständig löschen
-// (Artikel wandert dann wieder in die offene Pickliste).
 function renderWarehouseHistoryBody(wrap) {
-  // Pro Artikel zusammenfassen: aktive Ketten (= aktueller Stand pro Box)
-  // + komplette Rohhistorie (für die aufklappbare Detailansicht).
   let articleGroups = [];
   Object.keys(commitLog).forEach(sku => {
     const data = commitLog[sku];
@@ -2895,7 +2549,6 @@ function renderWarehouseHistoryBody(wrap) {
         g.chains.some(c => (c.box || "").toLowerCase().includes(search)))
     : articleGroups;
 
-  // Neueste Aktivität zuerst (letztes Ereignis pro Artikel entscheidet)
   filtered.sort((a, b) => {
     const la = a.events[a.events.length - 1];
     const lb = b.events[b.events.length - 1];
@@ -3001,14 +2654,6 @@ function renderWarehouseHistoryBody(wrap) {
   }));
 }
 
-// Korrigiert eine bestehende Buchungskette (Menge und/oder Box), indem eine
-// verknüpfte Korrektur-Zeile angehängt wird (ref_uuid = chainId) - die
-// Original-Buchung bleibt dabei unverändert in der Datenbank stehen, nur
-// die Differenz wird zusätzlich gebucht. newQty === 0 entspricht damit
-// einem vollständigen Löschen der Kette. Der Artikel wird kurzzeitig vor
-// dem automatischen Refresh geschützt (siehe touchSku), damit die
-// Korrektur nicht durch eine noch nicht aktualisierte Serverantwort
-// überschrieben wird.
 async function applyBookingCorrection(sku, chainId, newQty, newRef) {
   const chains = (commitLog[sku] && commitLog[sku].chains) || [];
   const chain  = chains.find(c => c.chainId === chainId);
@@ -3032,8 +2677,6 @@ async function applyBookingCorrection(sku, chainId, newQty, newRef) {
     const uuid = genUUID();
     await sendWebhook("COMMIT_UNDO", { sku, art, undoQty: -delta, refUuid: chainId, uuid });
     chain.events.push({ qty: delta, ref: "", ts: new Date().toISOString(), user: currentUser, uuid, aktion: "COMMIT_UNDO" });
-    // Falls trotz Mengenreduzierung noch Restmenge bleibt und sich zusätzlich
-    // die Box geändert hat, die neue Box separat nachtragen (menge:0).
     if (newQty > 0 && boxChanged) {
       const uuid2 = genUUID();
       await sendWebhook("COMMIT", { sku, art, qty: 0, ref: newRef, uuid: uuid2, refUuid: chainId });
@@ -3045,7 +2688,6 @@ async function applyBookingCorrection(sku, chainId, newQty, newRef) {
     chain.events.push({ qty: 0, ref: newRef, ts: new Date().toISOString(), user: currentUser, uuid, aktion: "COMMIT" });
   }
 
-  // Lokalen Stand sofort widerspiegeln, ohne auf den nächsten Reload zu warten
   chain.qty = newQty;
   chain.box = newQty > 0 ? newRef : chain.box;
   committed[sku] = Math.max(0, (committed[sku] || 0) + delta);
@@ -3066,12 +2708,6 @@ async function applyBookingCorrection(sku, chainId, newQty, newRef) {
   renderView();
 }
 
-// ── FEHLMENGEN (Supervisor + Planer) ───────────────────────────────────────
-// Zeigt alle geplanten Artikel, bei denen die noch offene Menge (Geplant −
-// bereits Gepickt) NICHT durch den verfügbaren Bestand in den aktuell
-// angehakten Lagern gedeckt ist. Bewusst gegen die offene Menge gerechnet,
-// nicht gegen die volle Planmenge - ein bereits fertig kommissionierter
-// Artikel gilt nicht als "fehlend", egal wie wenig davon noch im Lager liegt.
 const FEHLMENGE_LAGER = [
   { key: "zl", label: "ZL" },
   { key: "co", label: "CO" },
@@ -3207,7 +2843,7 @@ function _buildFehlmengeCard(r) {
   if (isBestellt) card.style.background = "var(--bg2)";
 
   const mengeColor = isBestellt ? "var(--text2)" : "var(--err)";
-  const badgeCls   = isBestellt ? "" : ""; // Badges bleiben informativ, nur gedämpft via Karten-Hintergrund
+  const badgeCls   = isBestellt ? "" : "";
 
   const bestelltZeit = b.zeitstempel ? parseServerTimestamp(b.zeitstempel) : null;
   const bestelltLabel = bestelltZeit
@@ -3260,11 +2896,6 @@ function _buildFehlmengeCard(r) {
   return card;
 }
 
-// ── WARENKORB-KERNFUNKTIONEN ───────────────────────────────────────────────
-// Liefert die UUID des aktuell aktiven (Entwurfs-)Warenkorbs und legt bei
-// Bedarf einen neuen an (leer, Status OFFEN). Wird sowohl beim Öffnen der
-// Verkaufsliste-Ansicht als auch beim ersten "Zur Verkaufsliste hinzufügen"
-// aus der Preisliste aufgerufen.
 function ensureActiveCart() {
   if (activeCartUuid && carts[activeCartUuid] &&
       carts[activeCartUuid].status !== "ABGESCHLOSSEN" &&
@@ -3284,9 +2915,6 @@ function createNewCart() {
   return uuid;
 }
 
-// Bewusster Wechsel (Button "Neue Verkaufsliste starten"): die bisherige
-// aktive Liste bleibt erhalten (wird geparkt, auch wenn sie noch
-// "Unbenannt" ist) statt überschrieben zu werden - nichts geht verloren.
 function startNewCartExplicit() {
   if (activeCartUuid && carts[activeCartUuid] && carts[activeCartUuid].items.length > 0) {
     parkCart(activeCartUuid);
@@ -3295,10 +2923,6 @@ function startNewCartExplicit() {
   renderSales();
 }
 
-// Fügt einen Artikel aus der Preisliste zum aktiven Warenkorb hinzu.
-// Preisvorbelegung: Messepreis, sonst Akt. VK. Lieferart automatisch
-// "versand", wenn der Artikel keinen Bestand am Messestand hat (kann von
-// Hand auf "Mitnahme" umgestellt werden, falls doch noch etwas gefunden wird).
 function addToCart(art) {
   const uuid = ensureActiveCart();
   const cart = carts[uuid];
@@ -3350,10 +2974,6 @@ function parkCart(uuid) {
   });
 }
 
-// Abschluss: Bestand lokal sofort reduzieren (optimistisch, wie überall
-// sonst im Tool), Status auf ABGESCHLOSSEN setzen, Server-Aktion senden
-// (reduziert Bestand serverseitig über SALE-Zeilen + verschickt bei
-// Versand-Positionen die Übergabe-Mail, siehe Backend).
 async function completeCart(uuid) {
   const cart = carts[uuid];
   if (!cart) return;
@@ -3370,10 +2990,6 @@ async function completeCart(uuid) {
   saveState();
 }
 
-// ── AKTIVITÄTEN-JOURNAL (nur Supervisor) ──────────────────────────────────
-// Übersetzt einen normalisierten Journal-Eintrag vom Backend (siehe
-// loadActivityJournal()) in einen lesbaren Satz. detail1/2/3 bedeuten je
-// nach Quelle etwas anderes - siehe Backend-Kommentar.
 function describeJournalEntry(e) {
   const user = e.benutzer || "Unbekannt";
   const name = e.artikelname || e.sku || "(ohne Namen)";
@@ -3463,12 +3079,6 @@ async function renderJournal() {
   }
 }
 
-// ── VERKAUF ───────────────────────────────────────────────────────────────
-// Router: zeigt die Unter-Tab-Leiste (Verkaufslisten / Preisliste) und
-// delegiert an die jeweilige Render-Funktion. Beide Unteransichten sind
-// für dieselben Rollen sichtbar, die den Verkauf-Tab überhaupt öffnen
-// dürfen (Verkauf, Planer, Supervisor) - keine zusätzliche Rollenprüfung
-// nötig, das übernimmt bereits applyRolePermissions() auf Tab-Ebene.
 function renderSales() {
   const outer = qs("#view-sales");
   outer.innerHTML = "";
@@ -3590,8 +3200,6 @@ function renderSalesListen(wrap) {
     const item = cart.items.find(i => i.sku === inp.dataset.sku);
     if (!item) return;
     const raw = parseInt(inp.value, 10);
-    // Anpassungsposten (Rabatt/Zuschlag) dürfen negativ sein, normale
-    // Artikelpreise nicht.
     item.price = (item.lieferart === "anpassung") ? (isNaN(raw) ? 0 : raw) : Math.max(0, raw || 0);
     saveCartItem(uuid, item);
     renderSales();
@@ -3604,11 +3212,6 @@ function renderSalesListen(wrap) {
     renderSales();
   }));
 
-  // Rabatt/Zuschlag: eigener "Artikel" ohne echte SKU (sku = generierte
-  // ID), lieferart="anpassung" markiert ihn als Sonderposten - läuft
-  // technisch durch dieselbe Artikel-Infrastruktur (ITEM_SET/ITEM_REMOVE),
-  // taucht aber nicht im Onlineshop/Bestand auf und zählt einfach in die
-  // Gesamtsumme mit rein (auch negativ).
   const adjWrap = document.createElement("div");
   adjWrap.style.marginTop = "10px";
   adjWrap.innerHTML = `
@@ -3727,12 +3330,6 @@ function renderSalesListen(wrap) {
   }
   wrap.appendChild(actionsWrap);
 
-  // Geparkte Listen (alle außer der gerade aktiven), durchsuchbar nach Kundenname.
-  // WICHTIG: Das Suchfeld selbst wird nur EINMAL erzeugt - sein "input"-Handler
-  // aktualisiert ausschließlich den separaten Ergebnis-Container darunter.
-  // Würde man hier stattdessen renderSales() aufrufen, würde bei jedem
-  // Tastendruck auch das Suchfeld selbst neu erzeugt und der Fokus ginge
-  // verloren (gleicher Fehler, den Vorbereitung/Preisliste bewusst vermeiden).
   const allParked = Object.keys(carts).filter(id => carts[id].status === "GEPARKT" && id !== uuid);
   if (allParked.length > 0) {
     const hdr = document.createElement("div");
@@ -3758,9 +3355,6 @@ function renderSalesListen(wrap) {
   }
 }
 
-// Baut nur die Ergebnisliste der geparkten Verkaufslisten (siehe Kommentar
-// oben) - wird sowohl beim ersten Rendern als auch bei jedem Tastendruck im
-// Suchfeld aufgerufen, ohne das Suchfeld selbst anzufassen.
 function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
   resultsDiv.innerHTML = "";
 
@@ -3817,18 +3411,11 @@ function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
   });
 }
 
-// ── PREISLISTE (Unteransicht im Verkauf-Tab) ──────────────────────────────
-// Verschlüsselter Referenz-Code für den Mindestpreis: Ziffern umgedreht +
-// zweistellige Zufallszahl (10-99), analog zur bestehenden Sheet-Formel
-// (WENNFEHLER/JOIN/ArrayFormula/TEIL/ZUFALLSBEREICH). Wird pro SKU einmal
-// erzeugt und danach aus dem Cache wiederverwendet (siehe Kommentar bei
-// preisCodeCache oben) - Dekodierung: letzte zwei Ziffern weglassen, Rest
-// umdrehen.
 function obfuscateMinPreis(sku, minVal) {
   if (!minVal || minVal <= 0) return "-";
   if (preisCodeCache[sku] === undefined) {
     const reversed = String(Math.round(minVal)).split("").reverse().join("");
-    const noise = Math.floor(Math.random() * 90) + 10; // 10-99, immer zweistellig
+    const noise = Math.floor(Math.random() * 90) + 10;
     preisCodeCache[sku] = reversed + String(noise);
   }
   return preisCodeCache[sku];
@@ -4049,8 +3636,6 @@ function _buildPreislisteCard(art) {
   return card;
 }
 
-// ── WEBHOOK ───────────────────────────────────────────────────────────────
-// Reicht eine Änderung in die Sync-Queue ein (statt sofort zu senden)
 function sendWebhook(action, data) {
   if (!WEBHOOK_URL) return;
   const art = data.art || null;
@@ -4102,16 +3687,8 @@ function sendWebhook(action, data) {
       break;
   }
 
-  // Betroffenen Artikel kurzzeitig vor dem automatischen Refresh schützen
-  // (siehe TOUCH_PROTECTION_MS) - BigQuery braucht nach einem Schreiben
-  // etwas Zeit, bis eine erneute Abfrage die Änderung sieht.
   if (action === "COMMIT" || action === "COMMIT_UNDO") touchSku(sku);
 
-  // Mengenänderungen am selben Artikel werden gebündelt (debounced),
-  // alles andere (COMMIT, SALE etc.) geht sofort in die Queue. Kunden-
-  // felder und Warenkorb-Positionen bekommen ebenfalls eigene Debounce-
-  // Keys, damit schnelles Tippen nicht bei jedem Tastendruck einen
-  // eigenen Sync-Vorgang auslöst.
   const debounceKey =
     (action === "PLAN_SET" || action === "REMOVE") ? "plan:" + sku :
     (action === "CART_ITEM_SET")   ? "cartitem:" + data.cartUuid + ":" + sku :
@@ -4121,18 +3698,15 @@ function sendWebhook(action, data) {
   queueChange(action, payload, debounceKey, data.uuid || null);
 }
 
-// Planung senden: immer absolute Menge als PLAN (einfacher und zuverlässiger als ADJUST)
 function sendPlanWebhook(sku, oldQty, newQty, art) {
   if (!WEBHOOK_URL) return;
   if (newQty === 0) {
     sendWebhook("REMOVE", { sku, art });
   } else {
-    // PLAN_SET: immer absolute Zielmenge, kein Summieren im Script
     sendWebhook("PLAN_SET", { sku, qty: newQty, art });
   }
 }
 
-// ── EINSTELLUNGEN: PIN-VERWALTUNG (nur Supervisor) ────────────────────────
 async function loadPinStatus() {
   try {
     const url  = authUrl(WEBHOOK_URL + "?action=settings_get_status");
@@ -4183,7 +3757,6 @@ async function savePins() {
   }
 }
 
-// ── EINSTELLUNGEN: VERSAND (Asana-Projekt-E-Mail, nur Supervisor) ─────────
 async function loadShippingSettings() {
   try {
     const resp = await fetch(authUrl(WEBHOOK_URL + "?action=settings_get_shipping"));
@@ -4230,7 +3803,6 @@ function fmtStocks(s) {
   return parts.length ? parts.join(" · ") : "Kein Bestand";
 }
 
-// Lager-Grid mit 5 Kacheln, Bestand 0 ausgegraut
 function stockGrid(stocks, small = false) {
   if (!stocks) return "";
   const lager = [
@@ -4258,7 +3830,6 @@ function stockGrid(stocks, small = false) {
   </div>`;
 }
 
-// Produktbild aus IMAGE_MINI mit Fallback-Icon – immer ein einzelnes Element
 function imgTag(art, size = 56) {
   const placeholder = `<div style="width:${size}px;height:${size}px;border-radius:var(--r);border:0.5px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="ti ti-photo-off" style="font-size:${Math.round(size*0.4)}px;color:var(--text2);" aria-hidden="true"></i></div>`;
   if (!art.image) return placeholder;
@@ -4270,10 +3841,8 @@ function imgTag(art, size = 56) {
   </div>`;
 }
 
-// ── EVENTS ────────────────────────────────────────────────────────────────
 document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
   currentView = t.dataset.tab;
-  // Detail-States beim Tab-Wechsel zurücksetzen
   prepDetailSku       = null;
   merklisteDetailSku  = null;
   renderView();
@@ -4347,7 +3916,6 @@ qs("#btn-test-webhook").addEventListener("click", async () => {
   }
 });
 
-// ── START ─────────────────────────────────────────────────────────────────
 async function startApp(forceReload = false) {
   showLoading();
   setLoadingStep("Einstellungen laden…", 5);
@@ -4374,7 +3942,6 @@ async function startApp(forceReload = false) {
   updateSyncStatusUI();
 
   if (WEBHOOK_URL && !messeLabel) {
-    // Noch keine Messe ausgewählt → Dialog anzeigen
     await showMesseDialog();
   } else if (WEBHOOK_URL && messeLabel) {
     startAutoRefresh();
@@ -4386,15 +3953,12 @@ async function startApp(forceReload = false) {
 }
 
 loadUIState();
-// Zentrale URL immer erzwingen (überschreibt alten localStorage-Wert)
 if (WEBHOOK_URL_DEFAULT) WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 loadSyncQueue();
-clearArticleCache(); // alten Cache aufräumen
+clearArticleCache();
 qs("#messe-label-display").textContent = messeLabel || "Messe auswählen…";
 updateUserBadge();
 
-// Login-Gate: ohne gültiges Token (pro Tab/PWA-Instanz, siehe AUTH-Kommentar
-// oben) wird nichts geladen - erst nach erfolgreichem Login startet startApp().
 if (!WEBHOOK_URL) {
   hideLoading();
   renderView();
