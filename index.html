@@ -226,8 +226,13 @@
       <span id="current-user-display">–</span>
       <i class="ti ti-pencil" style="font-size:10px;opacity:.6;"></i>
     </button>
-    <span id="sync-status" style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--ok);">
-      <i class="ti ti-cloud-check" style="font-size:13px;"></i> Synchron
+    <span style="display:flex;align-items:center;gap:8px;">
+      <span id="sync-status" style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--ok);">
+        <i class="ti ti-cloud-check" style="font-size:13px;"></i> Synchron
+      </span>
+      <button id="btn-manual-refresh" class="btn-sm" title="Aktuellen Stand jetzt laden">
+        <i class="ti ti-refresh" style="font-size:12px;"></i>
+      </button>
     </span>
   </div>
 
@@ -907,8 +912,17 @@ async function loadRemoteState(silent = false) {
   }
 }
 
+// v18-Update: Der Timer läuft nur noch, während der Kommission-Tab aktiv
+// ist (dort ist "sieht ein Kollege gerade denselben Artikel?" wirklich
+// zeitkritisch). In allen anderen Tabs gibt es keinen laufenden Timer mehr
+// - dort holt sich die App den Stand statt dessen einmalig beim
+// Tab-Wechsel (siehe Tab-Click-Handler) und per manuellem
+// "Aktualisieren"-Button (#btn-manual-refresh). Das senkt den
+// urlfetch-Verbrauch weiter, ohne die Aktualität dort zu verschlechtern,
+// wo sie tatsächlich gebraucht wird.
 function startAutoRefresh() {
   stopAutoRefresh();
+  if (currentView !== "warehouse") return;
   refreshTimer = setInterval(() => {
     const active = document.activeElement;
     const isEditing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
@@ -3845,6 +3859,18 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
   currentView = t.dataset.tab;
   prepDetailSku       = null;
   merklisteDetailSku  = null;
+  // v18-Update: laufender Refresh nur in Kommission (siehe
+  // startAutoRefresh) - beim Wechsel in einen anderen Tab stattdessen
+  // einmalig einen frischen Stand holen, damit man nicht auf den nächsten
+  // Timer-Tick warten muss. Journal ausgenommen, da renderJournal() sich
+  // seinen Stand ohnehin selbst und separat holt (activity_journal-Aktion).
+  if (currentView === "warehouse") {
+    startAutoRefresh();
+    loadRemoteState(true);
+  } else {
+    stopAutoRefresh();
+    if (currentView !== "journal") loadRemoteState(true);
+  }
   renderView();
 }));
 
@@ -3857,6 +3883,16 @@ qs("#btn-change-user").addEventListener("click", showUserDialog);
 qs("#btn-save-user").addEventListener("click", saveUserName);
 qs("#btn-cancel-user").addEventListener("click", hideUserDialog);
 qs("#inp-user-name").addEventListener("keydown", e => { if (e.key === "Enter") saveUserName(); });
+
+qs("#btn-manual-refresh").addEventListener("click", async () => {
+  const btn = qs("#btn-manual-refresh");
+  const icon = btn.querySelector("i");
+  icon.style.animation = "spin .8s linear infinite";
+  btn.disabled = true;
+  await loadRemoteState(false);
+  icon.style.animation = "";
+  btn.disabled = false;
+});
 
 qs("#btn-reload").addEventListener("click", () => {
   if (!confirm("Artikel neu aus BigQuery laden und Cache leeren?")) return;
