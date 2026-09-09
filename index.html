@@ -65,7 +65,7 @@
     .notif-warn{background:var(--warn-bg);color:var(--warn);}
     .notif-err{background:var(--err-bg);color:var(--err);}
     #settings-panel{display:none;padding:12px 16px;border-bottom:0.5px solid var(--border);background:var(--bg2);}
-    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-sales,#view-journal,#view-fehlmengen{display:none;}
+    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-messebestand,#view-sales,#view-journal,#view-fehlmengen{display:none;}
     #loading-overlay{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;}
     #loading-overlay.hidden{display:none;}
     .loading-spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--info);border-radius:50%;animation:spin .8s linear infinite;}
@@ -306,6 +306,7 @@
     <button class="tab" data-tab="merkliste" data-roles="supervisor,planer"><i class="ti ti-star"></i>Merkliste</button>
     <button class="tab" data-tab="preise" data-roles="supervisor,planer"><i class="ti ti-currency-euro"></i>Messepreise</button>
     <button class="tab" data-tab="warehouse" data-roles="supervisor,planer,kommission"><i class="ti ti-packages"></i>Kommission</button>
+    <button class="tab" data-tab="messebestand" data-roles="supervisor,planer,kommission,verkauf"><i class="ti ti-box"></i>Messebestand</button>
     <button class="tab" data-tab="fehlmengen" data-roles="supervisor,planer"><i class="ti ti-alert-triangle"></i>Fehlmengen</button>
     <button class="tab" data-tab="sales" data-roles="supervisor,planer,verkauf"><i class="ti ti-shopping-cart"></i>Verkauf</button>
     <button class="tab" data-tab="journal" data-roles="supervisor"><i class="ti ti-history"></i>Journal</button>
@@ -318,6 +319,7 @@
     <div id="view-merkliste"></div>
     <div id="view-preise"></div>
     <div id="view-warehouse"></div>
+    <div id="view-messebestand"></div>
     <div id="view-fehlmengen"></div>
     <div id="view-sales"></div>
     <div id="view-journal"></div>
@@ -346,10 +348,10 @@ let currentUser = "";
 let messenConfig = [];
 
 const TAB_PERMISSIONS = {
-  supervisor: ["prep", "merkliste", "preise", "warehouse", "fehlmengen", "sales", "journal"],
-  planer:     ["prep", "merkliste", "preise", "warehouse", "fehlmengen", "sales"],
-  kommission: ["warehouse"],
-  verkauf:    ["sales"],
+  supervisor: ["prep", "merkliste", "preise", "warehouse", "messebestand", "fehlmengen", "sales", "journal"],
+  planer:     ["prep", "merkliste", "preise", "warehouse", "messebestand", "fehlmengen", "sales"],
+  kommission: ["warehouse", "messebestand"],
+  verkauf:    ["sales", "messebestand"],
 };
 
 function getDeviceId() {
@@ -423,6 +425,10 @@ let whSearch     = "";
 let whView       = "pick";
 let whHistorySearch = "";
 let whHideIfZlStock = true;
+
+let messebestandArtikelSearch = "";
+let messebestandBoxSearch     = "";
+let messebestandExpanded      = {};
 
 let refreshTimer = null;
 
@@ -1276,16 +1282,17 @@ function parseCSV(text) {
 }
 
 function renderView() {
-  ["prep","merkliste","preise","warehouse","fehlmengen","sales","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
+  ["prep","merkliste","preise","warehouse","messebestand","fehlmengen","sales","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
   qs(`#view-${currentView}`).style.display = "block";
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === currentView));
-  if (currentView === "prep")        renderPrep();
-  if (currentView === "merkliste")   renderMerklisteView();
-  if (currentView === "preise")      renderPreise();
-  if (currentView === "warehouse")   renderWarehouse();
-  if (currentView === "fehlmengen")  renderFehlmengen();
-  if (currentView === "sales")       renderSales();
-  if (currentView === "journal")     renderJournal();
+  if (currentView === "prep")         renderPrep();
+  if (currentView === "merkliste")    renderMerklisteView();
+  if (currentView === "preise")       renderPreise();
+  if (currentView === "warehouse")    renderWarehouse();
+  if (currentView === "messebestand") renderMessebestand();
+  if (currentView === "fehlmengen")   renderFehlmengen();
+  if (currentView === "sales")        renderSales();
+  if (currentView === "journal")      renderJournal();
 }
 
 function makeAutocomplete(inputEl, dropEl, getItems, onSelect) {
@@ -2720,6 +2727,164 @@ async function applyBookingCorrection(sku, chainId, newQty, newRef) {
     "warn"
   );
   renderView();
+}
+
+// ── MESSEBESTAND (alle Rollen) ─────────────────────────────────────────────
+// Zeigt, was in den bereits kommissionierten Boxen steckt - fasst dafür
+// commitLog (das ohnehin schon per loadState() geladen ist, siehe v18)
+// quer über alle SKUs nach Box-Nummer zusammen, statt wie sonst im Tool
+// nach SKU zu gruppieren. KEINE zusaetzliche Abfrage: reine Umsortierung
+// bereits vorhandener Daten im Browser.
+function buildMessebestandBoxes() {
+  const boxes = {};
+  Object.keys(commitLog).forEach(sku => {
+    const data = commitLog[sku];
+    if (!data || !Array.isArray(data.chains)) return;
+    const art = artBySku[sku];
+    data.chains.forEach(chain => {
+      const box = (chain.box || "").trim();
+      if (!box || !(chain.qty > 0)) return;
+      if (!boxes[box]) boxes[box] = { box, items: [], lastTs: null, lastUser: "" };
+      const lastEvent = (chain.events && chain.events.length) ? chain.events[chain.events.length - 1] : null;
+      const ts   = lastEvent ? lastEvent.ts   : null;
+      const user = lastEvent ? lastEvent.user : "";
+      boxes[box].items.push({
+        sku, name: art ? art.name : sku, ean: art ? art.ean : "",
+        qty: chain.qty, ts, user,
+      });
+      const tsDate = ts ? parseServerTimestamp(ts) : null;
+      const curDate = boxes[box].lastTs ? parseServerTimestamp(boxes[box].lastTs) : null;
+      if (tsDate && (!curDate || tsDate > curDate)) {
+        boxes[box].lastTs   = ts;
+        boxes[box].lastUser = user;
+      }
+    });
+  });
+  return boxes;
+}
+
+function renderMessebestand() {
+  const wrap = qs("#view-messebestand");
+
+  wrap.innerHTML = `
+    <p class="muted" style="margin-bottom:12px;">Inhalt der bereits fuer diese Messe kommissionierten Boxen. Suche nach Artikel, um zu sehen in welchen Boxen er liegt, oder nach Box-Nr., um deren Inhalt zu sehen.</p>
+    <div style="display:grid;grid-template-columns:1fr 200px;gap:10px;margin-bottom:12px;">
+      <div class="search-bar" style="margin-bottom:0;">
+        <i class="ti ti-search"></i>
+        <input type="text" id="mb-artikel-search" placeholder="Name, SKU oder EAN ..." value="${messebestandArtikelSearch}" />
+      </div>
+      <div class="search-bar" style="margin-bottom:0;">
+        <i class="ti ti-box"></i>
+        <input type="text" id="mb-box-search" placeholder="Box-Nr. ..." value="${messebestandBoxSearch}" style="padding-left:32px;" />
+      </div>
+    </div>
+    <div id="mb-results"></div>
+  `;
+
+  qs("#mb-artikel-search").addEventListener("input", e => { messebestandArtikelSearch = e.target.value; runMessebestandSearch(); });
+  qs("#mb-box-search").addEventListener("input", e => { messebestandBoxSearch = e.target.value; runMessebestandSearch(); });
+
+  runMessebestandSearch();
+}
+
+function runMessebestandSearch() {
+  const resultsEl = qs("#mb-results");
+  if (!resultsEl) return;
+
+  const boxes = buildMessebestandBoxes();
+  const aq = messebestandArtikelSearch.trim().toLowerCase();
+  const bq = messebestandBoxSearch.trim().toLowerCase();
+  const hasFilter = !!(aq || bq);
+
+  const aTokens = aq.split(/\s+/).filter(Boolean);
+  const itemMatches = item => {
+    if (!aTokens.length) return false;
+    const haystack = (item.name + " " + item.sku + " " + (item.ean || "")).toLowerCase();
+    return aTokens.every(t => haystack.includes(t));
+  };
+
+  let list = Object.values(boxes);
+
+  if (bq) list = list.filter(b => b.box.toLowerCase().includes(bq));
+  if (aq) list = list.filter(b => b.items.some(itemMatches));
+
+  list.sort((x, y) => {
+    const dx = x.lastTs ? parseServerTimestamp(x.lastTs) : null;
+    const dy = y.lastTs ? parseServerTimestamp(y.lastTs) : null;
+    if (dx && dy) return dy - dx;
+    if (dx) return -1;
+    if (dy) return 1;
+    return x.box.localeCompare(y.box, "de");
+  });
+
+  resultsEl.innerHTML = "";
+
+  const totalBoxen = Object.keys(boxes).length;
+  const totalArtikel = Object.values(boxes).reduce((s, b) => s + b.items.reduce((s2, i) => s2 + i.qty, 0), 0);
+
+  const info = document.createElement("div");
+  info.className = "muted";
+  info.style.cssText = "font-size:12px;margin-bottom:10px;";
+  info.textContent = hasFilter
+    ? `${list.length} von ${totalBoxen} Boxen · gefiltert`
+    : `${totalBoxen} Boxen · ${totalArtikel} Artikel gesamt`;
+  resultsEl.appendChild(info);
+
+  if (totalBoxen === 0) {
+    resultsEl.insertAdjacentHTML("beforeend", `<div class="muted" style="text-align:center;padding:32px 0;">
+      <i class="ti ti-box-off" style="font-size:36px;display:block;margin-bottom:10px;opacity:.4;"></i>
+      Noch keine Boxen kommissioniert.
+    </div>`);
+    return;
+  }
+  if (list.length === 0) {
+    resultsEl.insertAdjacentHTML("beforeend", `<div class="muted" style="text-align:center;padding:24px 0;">Keine Treffer fuer diese Suche.</div>`);
+    return;
+  }
+
+  list.forEach(b => {
+    const expanded = hasFilter || !!messebestandExpanded[b.box];
+    const itemCount = b.items.length;
+    const d = b.lastTs ? parseServerTimestamp(b.lastTs) : null;
+    const dLabel = d ? d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+
+    const card = document.createElement("div");
+    card.className = "card";
+    card.style.cursor = "pointer";
+
+    const itemsHTML = b.items
+      .slice()
+      .sort((a, c) => a.name.localeCompare(c.name, "de"))
+      .map(item => {
+        const hit = aq && itemMatches(item);
+        return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;${hit ? "background:var(--warn-bg);" : ""}">
+          <span style="font-size:13px;${hit ? "font-weight:500;" : ""}">${item.name}</span>
+          <span class="muted" style="flex-shrink:0;">${item.sku}${item.ean ? " · " + item.ean : ""} · ${item.qty}x</span>
+        </div>`;
+      }).join("");
+
+    card.innerHTML = `
+      <div class="mb-card-header" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+          <i class="ti ti-package" style="font-size:18px;color:var(--text2);flex-shrink:0;"></i>
+          <span style="font-weight:500;font-size:14px;">${b.box}</span>
+          <span class="muted">${itemCount} Artikel</span>
+        </div>
+        <i class="ti ti-chevron-${expanded ? "up" : "down"}" style="font-size:16px;color:var(--text2);flex-shrink:0;"></i>
+      </div>
+      ${dLabel ? `<div class="muted" style="font-size:11px;margin:4px 0 0 28px;">zuletzt aktualisiert ${dLabel}${b.lastUser ? " · " + b.lastUser : ""}</div>` : ""}
+      <div class="mb-card-items" style="display:${expanded ? "flex" : "none"};flex-direction:column;gap:4px;margin:10px 0 0 28px;">
+        ${itemsHTML}
+      </div>
+    `;
+
+    card.querySelector(".mb-card-header").addEventListener("click", () => {
+      messebestandExpanded[b.box] = !messebestandExpanded[b.box];
+      runMessebestandSearch();
+    });
+
+    resultsEl.appendChild(card);
+  });
 }
 
 const FEHLMENGE_LAGER = [
