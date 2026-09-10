@@ -418,6 +418,7 @@ const PICKORTE = [
   { key: "hh", label: "Hamburg",      prefix: "HH-", link: "https://www.atlantis-tauchshop.hamburg/admin/lager_mobile.php?modul=auslagern&action=scan_produkt&search={ARTIKELNUMMER}" },
 ];
 let whPickort = "";
+let whFreiesPicken = false;
 
 let whKategorie  = "";
 let whLieferant  = "";
@@ -654,7 +655,7 @@ function attachQtyHandler(inp, getSku, getArt, onSave) {
 function saveUIState() {
   const s = {
     activeCartUuid,
-    messeLabel, WEBHOOK_URL, currentUser, whPickort, whKategorie, whLieferant, whSearch, whHideIfZlStock,
+    messeLabel, WEBHOOK_URL, currentUser, whPickort, whFreiesPicken, whKategorie, whLieferant, whSearch, whHideIfZlStock,
     merklisteCollapsed, masterCollapsed
   };
   try { localStorage.setItem("messetool_ui", JSON.stringify(s)); } catch(e){}
@@ -670,6 +671,7 @@ function loadUIState() {
     WEBHOOK_URL = WEBHOOK_URL_DEFAULT || src.WEBHOOK_URL || "";
     currentUser = src.currentUser || "";
     whPickort   = src.whPickort   || "";
+    whFreiesPicken = !!src.whFreiesPicken;
     whKategorie = src.whKategorie || "";
     whLieferant = src.whLieferant || "";
     whSearch    = src.whSearch    || "";
@@ -979,7 +981,7 @@ function skuEanHTML(sku, ean) {
 }
 
 function skuEanHTMLForPick(sku, ean) {
-  const pickInfo = PICKORTE.find(p => p.key === whPickort);
+  const pickInfo = whFreiesPicken ? null : PICKORTE.find(p => p.key === whPickort);
   const url = pickInfo && pickInfo.link ? pickInfo.link.replace("{ARTIKELNUMMER}", encodeURIComponent(sku)) : null;
   const skuPart = url
     ? `<a href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:inherit;text-decoration:underline;">${sku}</a>`
@@ -2257,11 +2259,13 @@ function renderWarehouse() {
   wrap.innerHTML = `<p class="muted" style="margin-bottom:12px;">Artikel entnehmen & bestätigen. Artikel können auch wieder aus der Liste entfernt werden.</p>`;
 
   const pickWrap = document.createElement("div");
-  pickWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;";
+  pickWrap.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:10px;";
   PICKORTE.forEach(p => {
     const b = document.createElement("button");
-    b.className = "btn" + (whPickort === p.key ? " btn-info" : "");
+    b.className = "btn" + (!whFreiesPicken && whPickort === p.key ? " btn-info" : "");
     b.style.fontSize = "13px";
+    b.disabled = whFreiesPicken;
+    if (whFreiesPicken) b.style.opacity = ".4";
     b.innerHTML = `<i class="ti ti-map-pin" style="font-size:13px;"></i> ${p.label}`;
     b.addEventListener("click", () => {
       try {
@@ -2275,7 +2279,22 @@ function renderWarehouse() {
     });
     pickWrap.appendChild(b);
   });
+  const freiesPickenBtn = document.createElement("button");
+  freiesPickenBtn.className = "btn" + (whFreiesPicken ? " btn-info" : "");
+  freiesPickenBtn.style.fontSize = "13px";
+  freiesPickenBtn.style.marginLeft = "8px";
+  freiesPickenBtn.innerHTML = `<i class="ti ti-list-details" style="font-size:13px;"></i> Freies Picken`;
+  freiesPickenBtn.addEventListener("click", () => {
+    whFreiesPicken = !whFreiesPicken;
+    saveUIState();
+    renderWarehouse();
+  });
+  pickWrap.appendChild(freiesPickenBtn);
   wrap.appendChild(pickWrap);
+
+  if (whFreiesPicken) {
+    wrap.insertAdjacentHTML("beforeend", `<p class="muted" style="margin:-4px 0 10px;">Zeigt alle noch offenen Artikel für diese Messe, unabhängig vom Lagerort.</p>`);
+  }
 
   const viewToggle = document.createElement("div");
   viewToggle.style.cssText = "display:flex;gap:6px;margin-bottom:16px;";
@@ -2300,15 +2319,15 @@ function renderWarehouse() {
     () => renderWarehouse()
   );
 
-  if (!whPickort) {
+  if (!whPickort && !whFreiesPicken) {
     wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="text-align:center;padding:24px 0;">
       <i class="ti ti-map-pin-off" style="font-size:32px;display:block;margin-bottom:8px;opacity:.5;"></i>
-      Bitte zuerst einen Lagerort zum Picken auswählen.
+      Bitte zuerst einen Lagerort zum Picken auswählen, oder "Freies Picken" nutzen.
     </div>`);
     return;
   }
 
-  const pickInfo = PICKORTE.find(p => p.key === whPickort);
+  const pickInfo = whFreiesPicken ? null : PICKORTE.find(p => p.key === whPickort);
 
   const searchWrap = document.createElement("div");
   searchWrap.className = "search-bar";
@@ -2331,7 +2350,7 @@ function renderWarehouse() {
     </div>`;
   wrap.appendChild(filterWrap);
 
-  if (whPickort && whPickort !== "zl") {
+  if (whPickort && whPickort !== "zl" && !whFreiesPicken) {
     const zlFilterWrap = document.createElement("label");
     zlFilterWrap.className = "filter-toggle";
     zlFilterWrap.style.marginBottom = "14px";
@@ -2372,15 +2391,18 @@ function renderWarehouseResultsBody(resultsWrap) {
   resultsWrap.innerHTML = "";
 
   const plannedAnywhere = articles.some(a => (planned[a.sku] || 0) > 0 && !commitDone[a.sku]);
-  const locationAll = articles.filter(a =>
-    (planned[a.sku] || 0) > 0 && (a.stocks?.[whPickort] || 0) > 0
-  );
-  const pickInfo = PICKORTE.find(p => p.key === whPickort);
+  // Freies Picken: kein Bestands-Filter an einem bestimmten Ort - zeigt alle
+  // noch geplanten, nicht fertigen Artikel unabhängig davon, wo (oder ob
+  // überhaupt noch) Bestand liegt.
+  const locationAll = whFreiesPicken
+    ? articles.filter(a => (planned[a.sku] || 0) > 0)
+    : articles.filter(a => (planned[a.sku] || 0) > 0 && (a.stocks?.[whPickort] || 0) > 0);
+  const pickInfo = whFreiesPicken ? null : PICKORTE.find(p => p.key === whPickort);
 
   const ws = whSearch.trim().toLowerCase();
   const wk = whKategorie.trim().toLowerCase();
   const wl = whLieferant.trim().toLowerCase();
-  const zlFilterAktiv = whHideIfZlStock && whPickort !== "zl";
+  const zlFilterAktiv = !whFreiesPicken && whHideIfZlStock && whPickort !== "zl";
   const locationFiltered = locationAll.filter(a => {
     if (wk && !(a.category||"").toLowerCase().includes(wk)) return false;
     if (wl && !(a.supplier||"").toLowerCase().includes(wl)) return false;
@@ -2404,11 +2426,16 @@ function renderWarehouseResultsBody(resultsWrap) {
   }
   if (toCommit.length === 0) {
     const filterActive = ws || wk || wl || zlFilterAktiv;
-    resultsWrap.innerHTML = `<div style="text-align:center;padding:32px 0;" class="muted">
-      <i class="ti ti-packages" style="font-size:40px;display:block;margin-bottom:12px;opacity:.5;"></i>
-      Keine offenen Artikel${filterActive ? " für diesen Filter" : ""} mit Bestand in <strong>${pickInfo.label}</strong>.<br>
-      <span style="font-size:12px;">${filterActive ? "Filter anpassen, anderen" : "Anderen"} Lagerort wählen oder Lagerdaten werden noch geladen.</span>
-    </div>`;
+    resultsWrap.innerHTML = whFreiesPicken
+      ? `<div style="text-align:center;padding:32px 0;" class="muted">
+          <i class="ti ti-packages" style="font-size:40px;display:block;margin-bottom:12px;opacity:.5;"></i>
+          Keine offenen Artikel${filterActive ? " für diesen Filter" : " mehr - alles kommissioniert"}.
+        </div>`
+      : `<div style="text-align:center;padding:32px 0;" class="muted">
+          <i class="ti ti-packages" style="font-size:40px;display:block;margin-bottom:12px;opacity:.5;"></i>
+          Keine offenen Artikel${filterActive ? " für diesen Filter" : ""} mit Bestand in <strong>${pickInfo.label}</strong>.<br>
+          <span style="font-size:12px;">${filterActive ? "Filter anpassen, anderen" : "Anderen"} Lagerort wählen, "Freies Picken" nutzen oder Lagerdaten werden noch geladen.</span>
+        </div>`;
     return;
   }
 
@@ -2417,7 +2444,7 @@ function renderWarehouseResultsBody(resultsWrap) {
   const totalOpen      = Math.max(0, totalPlanned - totalCommitted);
   resultsWrap.insertAdjacentHTML("beforeend", `
     <div class="card" style="background:var(--bg2);margin-bottom:16px;">
-      <div class="muted" style="text-align:center;margin-bottom:6px;font-size:12px;">Zahlen beziehen sich auf <strong>${pickInfo.label}</strong>${(ws||wk||wl) ? " · gefiltert" : ""}</div>
+      <div class="muted" style="text-align:center;margin-bottom:6px;font-size:12px;">Zahlen beziehen sich auf <strong>${whFreiesPicken ? "alle Lagerorte" : pickInfo.label}</strong>${(ws||wk||wl) ? " · gefiltert" : ""}</div>
       <div style="display:flex;gap:16px;justify-content:space-around;text-align:center;">
         <div><div style="font-size:20px;font-weight:600;">${totalPlanned}</div><div class="muted">Geplant</div></div>
         <div><div style="font-size:20px;font-weight:600;color:var(--ok);">${totalCommitted}</div><div class="muted">Kommissioniert</div></div>
@@ -2436,8 +2463,8 @@ function renderWarehouseResultsBody(resultsWrap) {
     const done  = commitDone[sku] || false;
     const offen = Math.max(0, qty - comm);
     const chains = (commitLog[sku] && commitLog[sku].chains) || [];
-    const stockHere   = art.stocks?.[whPickort] || 0;
-    const maxEntnahme = Math.min(offen, stockHere);
+    const stockHere   = whFreiesPicken ? null : (art.stocks?.[whPickort] || 0);
+    const maxEntnahme = whFreiesPicken ? offen : Math.min(offen, stockHere);
     const master = getMasterOf(art);
 
     const card = document.createElement("div");
@@ -2462,18 +2489,18 @@ function renderWarehouseResultsBody(resultsWrap) {
             <span class="badge info">Geplant: ${qty}</span>
             <span class="badge ok">Komm.: ${comm}</span>
             ${offen > 0 ? `<span class="badge warn">Offen: ${offen}</span>` : `<span class="badge ok"><i class="ti ti-check" style="font-size:10px;"></i> Erledigt</span>`}
-            ${stockHere < offen ? `<span class="badge err">${pickInfo.label}: ${stockHere}</span>` : ""}
           </div>
+          ${art._detailLoaded ? stockGrid(art.stocks, true, whFreiesPicken ? null : whPickort) : `<div class="muted" style="font-size:11px;opacity:.6;padding:4px 0;">Lagerbestand wird geladen…</div>`}
           ${logHTML}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
           ${!done ? `
             <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
-              <input class="qty-inp inp-wh-qty" type="number" min="1" max="${Math.max(1,stockHere)}"
+              <input class="qty-inp inp-wh-qty" type="number" min="1" ${whFreiesPicken ? "" : `max="${Math.max(1,stockHere)}"`}
                 value="${maxEntnahme > 0 ? maxEntnahme : 1}" data-sku="${sku}" style="width:60px;" />
               <input class="btn" type="text" placeholder="Box-Nr."
                 id="ref-${sku}" style="width:120px;font-size:12px;padding:6px 8px;"
-                value="${pickInfo.prefix}" />
+                value="${whFreiesPicken ? "" : pickInfo.prefix}" />
             </div>
             <button class="btn btn-ok btn-commit" data-sku="${sku}" style="width:100%;">
               <i class="ti ti-check"></i> Bestätigen
@@ -3982,7 +4009,7 @@ function fmtStocks(s) {
   return parts.length ? parts.join(" · ") : "Kein Bestand";
 }
 
-function stockGrid(stocks, small = false) {
+function stockGrid(stocks, small = false, highlightKey = null) {
   if (!stocks) return "";
   const lager = [
     { key: "zl", label: "ZL", val: stocks.zl },
@@ -4001,7 +4028,8 @@ function stockGrid(stocks, small = false) {
       const bg     = active ? "var(--info-bg)"  : "var(--bg2)";
       const col    = active ? "var(--info)"     : "var(--text2)";
       const numCol = active ? "var(--info)"     : "var(--text2)";
-      return `<div style="background:${bg};border-radius:${radius};padding:${pad};text-align:center;">
+      const border = l.key === highlightKey ? "border:1.5px solid var(--info);" : "border:1.5px solid transparent;";
+      return `<div style="background:${bg};border-radius:${radius};padding:${pad};text-align:center;${border}">
         <div style="font-size:${labSz};color:${col};margin-bottom:1px;">${l.label}</div>
         <div style="font-size:${numSz};font-weight:500;color:${numCol};">${l.val}</div>
       </div>`;
