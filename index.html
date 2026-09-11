@@ -993,6 +993,25 @@ function skuEanHTMLForPick(sku, ean) {
   return html;
 }
 
+// SKU-Link zum Zentrallager-Admin (Artikel-Bearbeitungsseite), NICHT zu
+// verwechseln mit den Pickort-Links in skuEanHTMLForPick() (dort geht es
+// um die Lager-Scan-Funktion je Standort). zlProductsId stammt aus
+// shop_products.products_id (eigener ID-Raum, siehe Backend-Kommentar) -
+// ohne diese ID (z.B. noch nicht geladen) bleibt die SKU reiner Text.
+function skuEanHTMLForZentrallager(sku, ean, zlProductsId) {
+  const url = zlProductsId
+    ? "https://www.wassersport-logistics.de/admin/categories.php?pID=" + encodeURIComponent(zlProductsId) + "&storeID=0&action=new_product&kartei=allgemein"
+    : null;
+  const skuPart = url
+    ? `<a href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:inherit;text-decoration:underline;">${sku}</a>`
+    : sku;
+  let html = `<span class="copy-field">${skuPart}<i class="ti ti-copy copy-btn" title="SKU kopieren" onclick="event.stopPropagation();copyToClipboard('${sku}','SKU')"></i></span>`;
+  if (ean) {
+    html += ` · <span class="copy-field">${ean}<i class="ti ti-copy copy-btn" title="EAN kopieren" onclick="event.stopPropagation();copyToClipboard('${ean}','EAN')"></i></span>`;
+  }
+  return html;
+}
+
 function ensureUser() {
   if (currentUser && currentUser !== "Unbekannt") { updateUserBadge(); return; }
   showUserDialog();
@@ -1258,6 +1277,55 @@ async function ensureDetailsLoaded(skus, onUpdate) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── MITBEWERBERPREISE (Netrivals) ─────────────────────────────────────────
+// Gleiches Batch-Muster wie ensureDetailsLoaded() - max 150 SKUs pro Call,
+// damit hier kein zusätzlicher Verbrauch pro Artikel entsteht. art.rival
+// bleibt null, wenn kein Mitbewerber gefunden wurde (Backend liefert die
+// SKU dann einfach nicht zurück, siehe getRivalSQL) - _rivalLoaded
+// unterscheidet "noch nicht geprüft" von "geprüft, nichts gefunden".
+const rivalLoadingInFlight = new Set();
+
+async function ensureRivalsLoaded(skus, onUpdate) {
+  if (!WEBHOOK_URL || skus.length === 0) return;
+
+  const missing = skus.filter(sku => {
+    const art = artBySku[sku];
+    return art && !art._rivalLoaded && !rivalLoadingInFlight.has(sku);
+  });
+  if (missing.length === 0) return;
+
+  missing.forEach(sku => rivalLoadingInFlight.add(sku));
+
+  try {
+    const batchSize = 150;
+    for (let i = 0; i < missing.length; i += batchSize) {
+      const batch = missing.slice(i, i + batchSize);
+      const url = authUrl(WEBHOOK_URL + "?action=articles_rivals&skus=" + encodeURIComponent(batch.join(",")));
+      const resp = await fetch(url);
+      if (!resp.ok) { console.warn("[Rivals] HTTP-Fehler", resp.status, "für Batch", i); continue; }
+      const json = await resp.json();
+      if (!json.ok) {
+        console.warn("[Rivals] Backend-Fehler:", json.error, "code:", json.code);
+        if (json.code === 401) { clearAuth(); requireLogin(); return; }
+        continue;
+      }
+
+      const rivals = json.rivals || {};
+      batch.forEach(sku => {
+        const art = artBySku[sku];
+        if (!art) return;
+        art.rival = rivals[sku] || null;
+        art._rivalLoaded = true;
+      });
+    }
+    if (onUpdate) onUpdate();
+  } catch(e) {
+    console.warn("ensureRivalsLoaded:", e);
+  } finally {
+    missing.forEach(sku => rivalLoadingInFlight.delete(sku));
+  }
+}
 
 function isMaster(art)   { return !!slavesBySku[art.sku]; }
 function getSlavesOf(art){ return slavesBySku[art.sku] || []; }
@@ -1671,6 +1739,7 @@ function renderPreise() {
 
   const masterSkus = [...new Set(geplant.map(a => getMasterOf(a)).filter(Boolean).map(m => m.sku))];
   ensureDetailsLoaded([...geplant.map(a => a.sku), ...masterSkus], () => renderPreise());
+  ensureRivalsLoaded(geplant.map(a => a.sku), () => renderPreise());
 
   const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
   const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
@@ -1840,6 +1909,51 @@ function _renderPreisGroup(wrap, master, slaves) {
   wrap.appendChild(card);
 }
 
+// Vergleich läuft gegen "Akt. VK" (aktueller Online-Verkaufspreis), nicht
+// gegen einen evtl. schon gesetzten Messepreis - Messepreise fehlen in
+// dieser Ansicht ja meist noch (das ist gerade der Hauptfall hier), ein
+// Vergleich dagegen wäre in den meisten Fällen bedeutungslos (0 €).
+function _buildRivalHTML(slave, detailLoaded) {
+  if (!slave._rivalLoaded) {
+    return `<div class="muted" style="font-size:11px;opacity:.6;padding:4px 0;margin-bottom:10px;">Mitbewerberpreis wird geladen…</div>`;
+  }
+  if (!slave.rival) {
+    return `<div style="background:var(--bg2);border-radius:var(--r);padding:8px 10px;margin-bottom:10px;text-align:center;">
+      <span class="muted" style="font-size:12px;">Kein Mitbewerber-Preis gefunden</span>
+    </div>`;
+  }
+
+  const r = slave.rival;
+  const shippingHTML = r.shipping > 0
+    ? `zzgl. ${r.shipping.toLocaleString("de-DE")} € Versand`
+    : "Versand kostenlos";
+  const d = r.lastUpdated ? parseServerTimestamp(r.lastUpdated) : null;
+  const dLabel = d ? d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) : "";
+
+  let deltaHTML = "";
+  if (detailLoaded && slave.price > 0) {
+    const delta = Math.round(slave.price - r.price);
+    if (delta > 0) deltaHTML = `<span style="color:var(--err);font-weight:500;">${delta} € günstiger bei ${r.name}</span>`;
+    else if (delta < 0) deltaHTML = `<span style="color:var(--ok);font-weight:500;">${-delta} € günstiger als wir</span>`;
+    else deltaHTML = `<span class="muted">Gleicher Preis wie wir</span>`;
+  }
+
+  return `<div style="background:var(--warn-bg);border-radius:var(--r);padding:10px 12px;margin-bottom:10px;">
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--warn);margin-bottom:6px;">Günstigster Mitbewerber</div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">
+      <span style="font-size:13px;font-weight:500;">${r.name}</span>
+      <span style="font-size:16px;font-weight:600;">${Math.round(r.price)} €</span>
+    </div>
+    <div class="muted" style="font-size:11px;margin-bottom:8px;">${shippingHTML}${dLabel ? " · geprüft " + dLabel : ""}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span style="font-size:12px;">${deltaHTML}</span>
+      ${r.url ? `<a href="${r.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:12px;color:var(--info);display:flex;align-items:center;gap:4px;text-decoration:none;">
+        Angebot ansehen <i class="ti ti-external-link" style="font-size:12px;"></i>
+      </a>` : ""}
+    </div>
+  </div>`;
+}
+
 function _buildPreisSlaveRow(slave, withTopBorder) {
   const sku    = slave.sku;
   const p      = preise[sku] || {};
@@ -1847,10 +1961,22 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
   const ek     = loaded ? Number(slave.costPrice) || 0 : 0;
   const geplantMenge = planned[sku] || 0;
   const gepicktMenge = committed[sku] || 0;
+  const isRestposten = !!slave.restposten;
 
   const row = document.createElement("div");
   row.dataset.sku = sku;
-  row.style.cssText = withTopBorder ? "border-top:0.5px solid var(--border);padding-top:12px;margin-top:12px;" : "";
+  // Restposten bekommt denselben roten Kasten wie in der Preisliste
+  // (_buildPreislisteCard) - ersetzt in dem Fall den normalen
+  // Trennstrich zwischen Varianten durch einen eigenen Rahmen, damit die
+  // Hervorhebung auch bei mehreren Varianten pro Master-Gruppe eindeutig
+  // nur die betroffene Variante markiert.
+  row.style.cssText = isRestposten
+    ? "background:var(--err-bg);border:1px solid var(--err);border-radius:var(--rl);padding:12px;margin-bottom:10px;"
+    : (withTopBorder ? "border-top:0.5px solid var(--border);padding-top:12px;margin-top:12px;" : "");
+
+  const shopUrl = slave.productsId
+    ? `https://www.atlantis-onlineshop.de/xanario_pinfo.php?products_id=${encodeURIComponent(slave.productsId)}`
+    : null;
 
   const calcHTML = (!loaded) ? `<div class="muted" style="font-size:11px;opacity:.6;padding:4px 0;">Kalkulationsgrundlage wird geladen…</div>` : (() => {
     const markups = [10, 20, 30, 40, 50];
@@ -1864,7 +1990,13 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
     </div>`;
   })();
 
+  const rivalHTML = _buildRivalHTML(slave, loaded);
+
   row.innerHTML = `
+    ${isRestposten ? `<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+      <i class="ti ti-alert-triangle" style="font-size:13px;color:var(--err);"></i>
+      <span style="font-size:11px;font-weight:500;color:var(--err);">Restposten</span>
+    </div>` : ""}
     <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;">
       ${imgTag(slave, 40)}
       <div style="flex:1;min-width:0;">
@@ -1873,7 +2005,10 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
           <span class="badge info">Geplant: ${geplantMenge}</span>
           <span class="badge ok">Gepickt: ${gepicktMenge}</span>
         </div>
-        <div class="muted">${skuEanHTML(slave.sku, slave.ean)}</div>
+        <div class="muted">${skuEanHTMLForZentrallager(slave.sku, slave.ean, slave.zlProductsId)}</div>
+        ${shopUrl ? `<a href="${shopUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--info);margin-top:3px;text-decoration:none;">
+          <i class="ti ti-external-link" style="font-size:12px;"></i> Im Onlineshop öffnen
+        </a>` : ""}
       </div>
     </div>
     <button class="btn-sm btn-toggle-preis-stock" style="width:100%;justify-content:space-between;display:flex;margin-bottom:10px;">
@@ -1899,6 +2034,7 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
     </div>
     <div class="muted" style="font-size:11px;margin-bottom:4px;">Kalkulation: EK × (1 + Aufschlag) × 1,19, auf ganze € gerundet</div>
     ${calcHTML}
+    ${rivalHTML}
     <div style="display:flex;gap:8px;margin-bottom:8px;">
       <div style="flex:1;">
         <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Mindestpreis</label>
