@@ -2705,6 +2705,32 @@ function renderWarehouseResultsBody(resultsWrap) {
 }
 
 function renderWarehouseHistoryBody(wrap) {
+  wrap.insertAdjacentHTML("beforeend", `
+    <div class="search-bar" style="margin-bottom:12px;">
+      <i class="ti ti-search"></i>
+      <input type="text" id="wh-history-search" placeholder="Artikel, SKU oder Box suchen …" value="${whHistorySearch}" />
+    </div>`);
+
+  const resultsWrap = document.createElement("div");
+  wrap.appendChild(resultsWrap);
+
+  // Wichtig: der Eingabe-Handler baut NUR resultsWrap neu auf, nicht die
+  // ganze Ansicht (renderWarehouse()) - sonst wird das Suchfeld bei jedem
+  // Tastendruck aus dem DOM entfernt und neu erzeugt und verliert dabei
+  // den Fokus (genau der Fehler, der bei den geparkten Verkaufslisten und
+  // dem Kommission-Filter schon bewusst vermieden wurde, hier aber noch
+  // vorkam).
+  qs("#wh-history-search").addEventListener("input", e => {
+    whHistorySearch = e.target.value;
+    renderWarehouseHistoryResults(resultsWrap);
+  });
+
+  renderWarehouseHistoryResults(resultsWrap);
+}
+
+function renderWarehouseHistoryResults(wrap) {
+  wrap.innerHTML = "";
+
   let articleGroups = [];
   Object.keys(commitLog).forEach(sku => {
     const data = commitLog[sku];
@@ -2714,16 +2740,6 @@ function renderWarehouseHistoryBody(wrap) {
     if (chains.length === 0 && events.length === 0) return;
     const art = artBySku[sku];
     articleGroups.push({ sku, name: art ? art.name : sku, ean: art ? art.ean : "", chains, events });
-  });
-
-  wrap.insertAdjacentHTML("beforeend", `
-    <div class="search-bar" style="margin-bottom:12px;">
-      <i class="ti ti-search"></i>
-      <input type="text" id="wh-history-search" placeholder="Artikel, SKU oder Box suchen …" value="${whHistorySearch}" />
-    </div>`);
-  qs("#wh-history-search").addEventListener("input", e => {
-    whHistorySearch = e.target.value;
-    renderWarehouse();
   });
 
   const search = whHistorySearch.trim().toLowerCase();
