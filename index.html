@@ -194,6 +194,12 @@
     </div>
   </div>
 
+  <!-- Verkaufsabschluss-Dialog (Zahlungsart + Quittungsfoto + Asana-Übergabe) -->
+  <div id="sale-complete-dialog" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:998;align-items:center;justify-content:center;padding:20px;overflow-y:auto;">
+    <div id="sale-complete-box" style="background:var(--bg);border-radius:14px;padding:20px;width:100%;max-width:380px;max-height:90vh;overflow-y:auto;"></div>
+  </div>
+
+
   <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px 0;">
     <div style="font-weight:600;font-size:17px;display:flex;align-items:center;gap:7px;">
       <i class="ti ti-anchor" style="color:var(--info);font-size:20px;"></i>
@@ -305,16 +311,6 @@
       <div id="lagerplaetze-status" style="margin-top:6px;font-size:12px;"></div>
     </div>
 
-    <div id="settings-versand" style="display:none;margin-top:14px;padding-top:14px;border-top:0.5px solid var(--border);">
-      <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Versand-Einstellungen</div>
-      <div class="muted" style="font-size:11px;margin-bottom:10px;">An diese Adresse geht bei Verkäufen mit Versand-Position automatisch eine E-Mail (z.B. eine Asana-Projekt-E-Mail-Adresse, damit dort direkt eine Aufgabe entsteht).</div>
-      <label class="muted" style="display:block;margin-bottom:2px;">Asana-Projekt-E-Mail</label>
-      <input type="text" id="inp-asana-email" placeholder="x+projekt@mail.asana.com" style="margin-bottom:8px;" />
-      <button id="btn-save-shipping" class="btn btn-info" style="width:100%;">
-        <i class="ti ti-device-floppy"></i> Speichern
-      </button>
-      <div id="shipping-status" style="margin-top:6px;font-size:12px;"></div>
-    </div>
   </div>
 
   <div class="tabs" style="margin-top:10px;">
@@ -580,20 +576,35 @@ qs("#btn-manage-messen").addEventListener("click", () => {
 function renderMessenConfigRows(list) {
   const wrap = qs("#messen-config-list");
   wrap.innerHTML = "";
-  const rows = (list && list.length) ? list : [{ name: "", bg: "#185fa5", fg: "#ffffff" }];
+  const rows = (list && list.length) ? list : [{ name: "", bg: "#185fa5", fg: "#ffffff", asanaProjectGid: "" }];
   rows.forEach(m => addMesseConfigRow(m));
+}
+
+// Akzeptiert entweder eine vollständige Asana-Projekt-URL
+// (https://app.asana.com/0/1206345678901234/list) oder direkt die
+// numerische ID - zieht in beiden Fällen nur die reinen Ziffern raus,
+// damit der Nutzer nicht selbst nach der ID suchen muss.
+function extractAsanaProjectGid(input) {
+  const trimmed = (input || "").trim();
+  if (!trimmed) return "";
+  if (/^\d+$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(/\/0\/(\d+)/) || trimmed.match(/(\d{8,})/);
+  return match ? match[1] : "";
 }
 
 function addMesseConfigRow(data) {
   const wrap = qs("#messen-config-list");
   const row = document.createElement("div");
   row.className = "messe-config-row";
-  row.style.cssText = "display:flex;gap:6px;align-items:center;";
+  row.style.cssText = "background:var(--bg2);border-radius:var(--r);padding:8px;";
   row.innerHTML = `
-    <input type="text" class="mc-name" placeholder="Messename" value="${(data.name||"").replace(/"/g,"&quot;")}" style="flex:1;" />
-    <input type="color" class="mc-bg" value="${data.bg || "#185fa5"}" title="Hintergrundfarbe" style="width:36px;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border2);cursor:pointer;" />
-    <input type="color" class="mc-fg" value="${data.fg || "#ffffff"}" title="Schriftfarbe" style="width:36px;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border2);cursor:pointer;" />
-    <button class="btn-sm btn-danger btn-remove-messe-row" title="Entfernen"><i class="ti ti-trash"></i></button>`;
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+      <input type="text" class="mc-name" placeholder="Messename" value="${(data.name||"").replace(/"/g,"&quot;")}" style="flex:1;" />
+      <input type="color" class="mc-bg" value="${data.bg || "#185fa5"}" title="Hintergrundfarbe" style="width:36px;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border2);cursor:pointer;" />
+      <input type="color" class="mc-fg" value="${data.fg || "#ffffff"}" title="Schriftfarbe" style="width:36px;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border2);cursor:pointer;" />
+      <button class="btn-sm btn-danger btn-remove-messe-row" title="Entfernen"><i class="ti ti-trash"></i></button>
+    </div>
+    <input type="text" class="mc-asana" placeholder="Asana-Projekt-URL oder -ID (Pflicht für Verkaufsabschluss)" value="${(data.asanaProjectGid||"").replace(/"/g,"&quot;")}" style="font-size:12px;" />`;
   row.querySelector(".btn-remove-messe-row").addEventListener("click", () => row.remove());
   wrap.appendChild(row);
 }
@@ -603,6 +614,7 @@ async function saveMessenConfigToServer() {
     name: row.querySelector(".mc-name").value.trim(),
     bg:   row.querySelector(".mc-bg").value,
     fg:   row.querySelector(".mc-fg").value,
+    asanaProjectGid: extractAsanaProjectGid(row.querySelector(".mc-asana").value),
   })).filter(r => r.name);
 
   const statusEl = qs("#messen-config-status");
@@ -3792,20 +3804,235 @@ function parkCart(uuid) {
   });
 }
 
-async function completeCart(uuid) {
-  const cart = carts[uuid];
-  if (!cart) return;
-  cart.items.forEach(i => {
-    committed[i.sku] = Math.max(0, (committed[i.sku] || 0) - i.qty);
+// ── VERKAUFSABSCHLUSS MIT ASANA-ÜBERGABE (v23) ─────────────────────────────
+const PAYMENT_METHODS = ["Bar", "EC-Karte", "Kreditkarte", "PayPal", "Zahlung ausstehend"];
+
+let saleCompleteCartUuid      = null;
+let saleCompletePhotoBase64   = null;
+let saleCompletePaymentMethod = "";
+
+function getCurrentMesseAsanaProjectGid() {
+  const cfg = messenConfig.find(m => m.name === messeLabel);
+  return cfg && cfg.asanaProjectGid ? cfg.asanaProjectGid : "";
+}
+
+// Öffnet den Abschluss-Dialog - blockiert vorher hart, falls für die
+// aktuelle Messe kein Asana-Projekt zugeordnet ist (bewusste Entscheidung,
+// siehe Chat: lieber früh und klar blockieren als einen Verkauf
+// abzuschließen, der nirgendwo als Vorgang landet).
+function openSaleCompleteDialog(cartUuid) {
+  const asanaGid = getCurrentMesseAsanaProjectGid();
+  if (!asanaGid) {
+    showNotification("Kein Asana-Projekt für diese Messe konfiguriert. Bitte in Einstellungen → Messen verwalten zuordnen.", "err");
+    return;
+  }
+  saleCompleteCartUuid      = cartUuid;
+  saleCompletePhotoBase64   = null;
+  saleCompletePaymentMethod = "";
+  renderSaleCompleteDialog();
+  qs("#sale-complete-dialog").style.display = "flex";
+}
+
+function closeSaleCompleteDialog() {
+  qs("#sale-complete-dialog").style.display = "none";
+}
+
+function renderSaleCompleteDialog() {
+  const cart = carts[saleCompleteCartUuid];
+  if (!cart) { closeSaleCompleteDialog(); return; }
+  const total = cart.items.reduce((s, i) => s + i.qty * i.price, 0);
+  const hasVersand = cart.items.some(i => i.lieferart === "versand");
+
+  const box = qs("#sale-complete-box");
+  box.innerHTML = `
+    <div style="font-weight:600;font-size:16px;margin-bottom:4px;">Verkauf abschließen</div>
+    <div class="muted" style="font-size:12px;margin-bottom:16px;">${cart.items.length} Artikel · ${fmtEur(total)}${cart.kunde.name ? " · " + cart.kunde.name : ""}</div>
+
+    <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--text2);margin-bottom:8px;">Zahlungsart</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;">
+      ${PAYMENT_METHODS.map(pm => `<button class="btn-sm sale-payment-btn ${saleCompletePaymentMethod === pm ? "btn-info" : ""}" data-method="${pm}">${pm}</button>`).join("")}
+    </div>
+
+    <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--text2);margin-bottom:8px;">Messequittung</div>
+    <div id="sale-photo-wrap" style="margin-bottom:18px;"></div>
+    <input type="file" id="sale-photo-input" accept="image/*" capture="environment" style="display:none;" />
+
+    ${hasVersand ? `<div style="background:var(--warn-bg);border-radius:10px;padding:10px 12px;margin-bottom:18px;display:flex;gap:8px;align-items:flex-start;">
+      <i class="ti ti-truck-delivery" style="font-size:15px;color:var(--warn);flex-shrink:0;margin-top:1px;"></i>
+      <div style="font-size:12px;color:var(--warn);">Enthält Versand-Position(en) - Kunde erhält nach Abschluss automatisch eine Bestätigung per E-Mail.</div>
+    </div>` : ""}
+
+    <button class="btn btn-ok" id="sale-complete-submit" style="width:100%;justify-content:center;margin-bottom:8px;">
+      <i class="ti ti-check"></i> Verkauf endgültig abschließen
+    </button>
+    <div class="muted" id="sale-complete-hint" style="text-align:center;font-size:11px;margin-bottom:10px;">Zahlungsart und Foto werden noch benötigt</div>
+    <button class="btn" id="sale-complete-cancel" style="width:100%;justify-content:center;">Abbrechen</button>
+  `;
+
+  renderSalePhotoArea();
+
+  box.querySelectorAll(".sale-payment-btn").forEach(b => b.addEventListener("click", () => {
+    saleCompletePaymentMethod = b.dataset.method;
+    renderSaleCompleteDialog();
+  }));
+
+  qs("#sale-photo-input").addEventListener("change", e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    compressImageToBase64(file, base64 => {
+      saleCompletePhotoBase64 = base64;
+      renderSaleCompleteDialog();
+    });
   });
-  cart.status = "ABGESCHLOSSEN";
-  touchSku(uuid);
-  await sendWebhook("CART_COMPLETE", {
-    cartUuid: uuid,
+
+  qs("#sale-complete-cancel").addEventListener("click", closeSaleCompleteDialog);
+  qs("#sale-complete-submit").addEventListener("click", submitSaleComplete);
+
+  updateSaleCompleteSubmitState();
+}
+
+function renderSalePhotoArea() {
+  const wrap = qs("#sale-photo-wrap");
+  if (!wrap) return;
+  if (saleCompletePhotoBase64) {
+    wrap.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;background:var(--bg2);border-radius:10px;padding:10px;">
+        <img src="data:image/jpeg;base64,${saleCompletePhotoBase64}" style="width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;" />
+        <div style="flex:1;font-size:12px;color:var(--ok);display:flex;align-items:center;gap:4px;"><i class="ti ti-check"></i> Foto aufgenommen</div>
+        <button class="btn-sm" id="sale-photo-retake">Neu</button>
+      </div>`;
+    qs("#sale-photo-retake").addEventListener("click", () => qs("#sale-photo-input").click());
+  } else {
+    wrap.innerHTML = `
+      <button id="sale-photo-trigger" style="display:flex;align-items:center;gap:10px;width:100%;background:var(--bg2);border:1.5px dashed var(--border2);border-radius:10px;padding:12px;cursor:pointer;">
+        <div style="width:40px;height:40px;border-radius:8px;background:var(--info-bg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <i class="ti ti-camera" style="font-size:18px;color:var(--info);"></i>
+        </div>
+        <span style="font-size:13px;color:var(--text2);">Foto der Quittung aufnehmen</span>
+      </button>`;
+    qs("#sale-photo-trigger").addEventListener("click", () => qs("#sale-photo-input").click());
+  }
+}
+
+function updateSaleCompleteSubmitState() {
+  const btn  = qs("#sale-complete-submit");
+  const hint = qs("#sale-complete-hint");
+  if (!btn) return;
+  const ready = !!saleCompletePaymentMethod && !!saleCompletePhotoBase64;
+  btn.disabled = !ready;
+  btn.style.opacity = ready ? "1" : ".5";
+  if (hint) hint.style.display = ready ? "none" : "block";
+}
+
+// Verkleinert/komprimiert das Foto client-seitig (max. 1600px Kante, JPEG
+// 0,7 Qualität), bevor es zusammen mit dem restlichen Payload verschickt
+// wird - hält den Request klein und den Asana-Upload schnell, unabhängig
+// von der Original-Kameraauflösung des Handys.
+function compressImageToBase64(file, callback) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 1600;
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        const scale = maxDim / Math.max(w, h);
+        w = Math.round(w * scale); h = Math.round(h * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      callback(canvas.toDataURL("image/jpeg", 0.7).split(",")[1]);
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Direkter (nicht über die Sync-Queue laufender) Aufruf, damit wir eine
+// echte, lesbare Antwort bekommen - Content-Type text/plain vermeidet den
+// CORS-Preflight, den application/json auslösen würde (den Apps Script
+// nicht beantworten kann). Falls sich das in der Praxis als doch nicht
+// lesbar herausstellt: auf zweigeteilten GET (Bestätigung) + separaten
+// no-cors-POST (nur Foto) umstellen, siehe Chat-Notiz.
+async function submitSaleComplete() {
+  const cart = carts[saleCompleteCartUuid];
+  if (!cart) return;
+  const btn = qs("#sale-complete-submit");
+  btn.disabled = true;
+  btn.innerHTML = `<i class="ti ti-loader-2" style="animation:spin .8s linear infinite;"></i> Wird übergeben…`;
+
+  const prozessId       = saleCompleteCartUuid.substring(0, 8).toUpperCase();
+  const asanaProjectGid = getCurrentMesseAsanaProjectGid();
+
+  const payload = {
+    action: "CART_COMPLETE",
+    token: getAuthToken(),
+    messe: messeLabel,
+    user: currentUser,
+    cartUuid: saleCompleteCartUuid,
     items: cart.items.map(i => ({ sku: i.sku, ean: i.ean, name: i.name, qty: i.qty, price: i.price, lieferart: i.lieferart })),
     kunde: cart.kunde,
+    paymentMethod: saleCompletePaymentMethod,
+    photoBase64: saleCompletePhotoBase64,
+    asanaProjectGid: asanaProjectGid,
+    prozessId: prozessId,
+  };
+
+  try {
+    const resp = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload),
+    });
+    const json = await resp.json();
+    if (!json.ok) throw new Error(json.error || "Unbekannter Fehler");
+
+    // Erst NACH bestätigtem Server-Erfolg lokal abschließen - kein
+    // optimistisches Update mehr, weil wir jetzt eine echte Antwort haben.
+    cart.items.forEach(i => { committed[i.sku] = Math.max(0, (committed[i.sku] || 0) - i.qty); });
+    cart.status = "ABGESCHLOSSEN";
+
+    closeSaleCompleteDialog();
+
+    if (json.asana && json.asana.ok === false) {
+      showNotification(`Verkauf abgeschlossen (${json.prozessId}), aber Asana-Übergabe fehlgeschlagen: ${json.asana.error}`, "warn");
+    } else if (json.asana && json.asana.ok) {
+      showNotification(`Verkauf abgeschlossen · Vorgang ${json.prozessId} an Asana übergeben`, "ok");
+    } else {
+      showNotification(`Verkauf abgeschlossen · Vorgang ${json.prozessId}`, "ok");
+    }
+
+    activeCartUuid = null;
+    saveUIState();
+    renderSales();
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = `<i class="ti ti-check"></i> Verkauf endgültig abschließen`;
+    showNotification("Fehler beim Abschließen: " + e.message, "err");
+  }
+}
+
+// ── VERKAUFSLISTE VERWERFEN (Variante 3) ───────────────────────────────────
+// Für die AKTIV bearbeitete Liste - das Löschen geparkter Listen gab es
+// schon (renderParkedCartsResults), hier fehlte bisher der Weg für eine
+// Liste, die noch nie geparkt wurde.
+function discardActiveCart(uuid) {
+  const cart = carts[uuid];
+  if (!cart) return;
+  if (!confirm(`Verkaufsliste${cart.kunde.name ? " von \"" + cart.kunde.name + "\"" : ""} wirklich verwerfen? Es kommt zu keinem Verkauf.`)) return;
+
+  touchSku(uuid);
+  sendWebhook("CART_HEADER_SET", {
+    cartUuid: uuid, status: "GELOESCHT",
+    kundeName: cart.kunde.name, kundeStrasse: cart.kunde.strasse,
+    kundePlzOrt: cart.kunde.plzOrt, kundeKontakt: cart.kunde.kontakt, kundeNotiz: cart.kunde.notiz,
   });
-  saveState();
+  delete carts[uuid];
+  activeCartUuid = null;
+  saveUIState();
+  showNotification("Verkaufsliste verworfen", "warn");
+  renderSales();
 }
 
 function describeJournalEntry(e) {
@@ -4128,23 +4355,24 @@ function renderSalesListen(wrap) {
 
     const completeBtn = document.createElement("button");
     completeBtn.className = "btn btn-ok";
-    completeBtn.style.cssText = "width:100%;justify-content:center;";
+    completeBtn.style.cssText = "width:100%;justify-content:center;margin-bottom:8px;";
     completeBtn.innerHTML = `<i class="ti ti-cash"></i> Zahlung erhalten &amp; abschließen`;
-    completeBtn.addEventListener("click", async () => {
+    completeBtn.addEventListener("click", () => {
       saveKunde();
       if (hasVersand && !cart.kunde.strasse) {
         showNotification("Für den Versand bitte Adresse eintragen.", "warn");
         return;
       }
-      const total = cart.items.reduce((s, i) => s + i.qty * i.price, 0);
-      if (!confirm(`Verkauf abschließen über ${fmtEur(total)}?`)) return;
-      await completeCart(uuid);
-      showNotification("Verkauf abgeschlossen" + (hasVersand ? " · Versandauftrag übergeben" : ""), "ok");
-      activeCartUuid = null;
-      saveUIState();
-      renderSales();
+      openSaleCompleteDialog(uuid);
     });
     actionsWrap.appendChild(completeBtn);
+
+    const discardBtn = document.createElement("button");
+    discardBtn.className = "btn";
+    discardBtn.style.cssText = "width:100%;justify-content:center;color:var(--err);border-color:var(--err);";
+    discardBtn.innerHTML = `<i class="ti ti-x"></i> Verkaufsliste verwerfen`;
+    discardBtn.addEventListener("click", () => discardActiveCart(uuid));
+    actionsWrap.appendChild(discardBtn);
   }
   wrap.appendChild(actionsWrap);
 
@@ -4581,36 +4809,9 @@ async function savePins() {
   }
 }
 
-async function loadShippingSettings() {
-  try {
-    const resp = await fetch(authUrl(WEBHOOK_URL + "?action=settings_get_shipping"));
-    const json = await resp.json();
-    if (json.ok) qs("#inp-asana-email").value = json.asanaEmail || "";
-  } catch(e) { console.warn("loadShippingSettings:", e); }
-}
-
-async function saveShippingSettings() {
-  const statusEl = qs("#shipping-status");
-  const email = qs("#inp-asana-email").value.trim();
-  statusEl.style.color = "var(--text2)";
-  statusEl.textContent = "Speichere…";
-  try {
-    const url = WEBHOOK_URL + "?action=settings_update_shipping&token=" + encodeURIComponent(getAuthToken()) +
-      "&asanaEmail=" + encodeURIComponent(email);
-    const resp = await fetch(url);
-    const json = await resp.json();
-    if (json.ok) {
-      statusEl.style.color = "var(--ok)";
-      statusEl.textContent = "Gespeichert.";
-    } else {
-      statusEl.style.color = "var(--err)";
-      statusEl.textContent = json.error || "Fehler beim Speichern.";
-    }
-  } catch(e) {
-    statusEl.style.color = "var(--err)";
-    statusEl.textContent = "Verbindungsfehler: " + e.message;
-  }
-}
+// v23: loadShippingSettings()/saveShippingSettings() (ASANA_PROJECT_EMAIL)
+// entfernt - ersetzt durch die Asana-API-Anbindung mit Projekt-ID pro
+// Messe (siehe messenConfig.asanaProjectGid, saveMessenConfigToServer()).
 
 function fmtEur(v) {
   return (v || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -4722,28 +4923,24 @@ qs("#btn-settings").addEventListener("click", async () => {
     if (getAuthRole() === "supervisor") {
       qs("#settings-pins").style.display = "block";
       qs("#settings-messen").style.display = "block";
-      qs("#settings-versand").style.display = "block";
       qs("#settings-lagerplaetze").style.display = "block";
       loadPinStatus();
       const merged = await fetchMergedMessenList();
       renderMessenConfigRows(merged);
-      loadShippingSettings();
       await loadInventurLagerplaetzeList();
       renderLagerplaetzeRows(inventurLagerplaetze);
     } else {
       qs("#settings-pins").style.display = "none";
       qs("#settings-messen").style.display = "none";
-      qs("#settings-versand").style.display = "none";
       qs("#settings-lagerplaetze").style.display = "none";
     }
   }
 });
 
-qs("#btn-add-messe-row").addEventListener("click", () => addMesseConfigRow({ name: "", bg: "#185fa5", fg: "#ffffff" }));
+qs("#btn-add-messe-row").addEventListener("click", () => addMesseConfigRow({ name: "", bg: "#185fa5", fg: "#ffffff", asanaProjectGid: "" }));
 qs("#btn-add-lagerplatz-row").addEventListener("click", () => addLagerplatzRow(""));
 qs("#btn-save-lagerplaetze").addEventListener("click", saveLagerplaetzeToServer);
 qs("#btn-save-messen-config").addEventListener("click", saveMessenConfigToServer);
-qs("#btn-save-shipping").addEventListener("click", saveShippingSettings);
 
 qs("#btn-save-settings").addEventListener("click", () => {
   WEBHOOK_URL = qs("#inp-webhook").value.trim() || WEBHOOK_URL_DEFAULT;
