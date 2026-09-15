@@ -355,7 +355,7 @@ let artBySku    = {};
 let slavesBySku = {};
 
 let messeLabel  = "";
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbyQYlG7-SuJbYsRTLjMiu2S7Wpn3AZz37lOR_WYSj2UvXFDsumhln-uCBsh9WLTYHGK/exec";
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbz97LHwokl1vpj2L4qVcOUwuVgYQmHZUNkLNJyxdpdUHR7hcHiD9tjp9hUUR5On4Q/exec";
 // v20: stündlich per Trigger aktualisierte Katalog-Datei, liegt im selben
 // GitHub-Pages-Repo wie diese HTML-Datei - lädt komplett ohne Apps Script/
 // BigQuery, kein Kontingent-Verbrauch beim Lesen. Läuft ins Leere (Fallback
@@ -493,12 +493,14 @@ function applyMesseTheme(name) {
 async function fetchMergedMessenList() {
   await loadMessenConfig();
   let bqMessen = [];
+  let bqFailed = false;
   if (WEBHOOK_URL) {
     try {
       const resp = await fetch(authUrl(WEBHOOK_URL + "?action=messen"));
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
       const json = await resp.json();
       bqMessen = json.messen || [];
-    } catch(e) { console.warn("fetchMergedMessenList:", e); }
+    } catch(e) { console.warn("fetchMergedMessenList:", e); bqFailed = true; }
   }
   const seen = new Set();
   const merged = [];
@@ -508,6 +510,14 @@ async function fetchMergedMessenList() {
     merged.push({ name: m.name, bg: "#185fa5", fg: "#ffffff", erstellt: m.erstellt });
     seen.add(m.name);
   });
+  // Leere Liste UND fehlgeschlagener Abruf zusammen deuten mit hoher
+  // Wahrscheinlichkeit auf ein Verbindungsproblem hin (z.B. veraltete
+  // Webhook-URL nach einem Deployment-Wechsel), nicht darauf, dass
+  // tatsächlich keine Messen existieren - das muss sichtbar werden statt
+  // als harmlose leere Liste durchzugehen.
+  if (merged.length === 0 && bqFailed) {
+    throw new Error("Verbindung zum Server fehlgeschlagen - bitte Webhook-URL in den Einstellungen prüfen.");
+  }
   return merged;
 }
 
@@ -1465,6 +1475,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // SKU dann einfach nicht zurück, siehe getRivalSQL) - _rivalLoaded
 // unterscheidet "noch nicht geprüft" von "geprüft, nichts gefunden".
 const rivalLoadingInFlight = new Set();
+const costPriceLoadingInFlight = new Set();
 
 async function ensureRivalsLoaded(skus, onUpdate) {
   if (!WEBHOOK_URL || skus.length === 0) return;
@@ -1504,6 +1515,57 @@ async function ensureRivalsLoaded(skus, onUpdate) {
     console.warn("ensureRivalsLoaded:", e);
   } finally {
     missing.forEach(sku => rivalLoadingInFlight.delete(sku));
+  }
+}
+
+// EK-Preis (Einkaufspreis) - NEU v24, bewusst getrennt von
+// ensureDetailsLoaded()/dem GitHub-Katalog: der Katalog ist eine
+// öffentliche, unauthentifizierte statische Datei, der EK darf dort
+// nicht mehr drinstehen. Nur Supervisor/Planer rufen diese Route
+// überhaupt auf (die einzige Stelle, die den EK anzeigt, ist Messepreise,
+// und dieser Tab ist für Kommission/Verkauf gar nicht sichtbar - siehe
+// TAB_PERMISSIONS) - server-seitig zusätzlich per ACTION_PERMISSIONS
+// abgesichert, falls trotzdem mal aufgerufen.
+async function ensureCostPricesLoaded(skus, onUpdate) {
+  if (!WEBHOOK_URL || skus.length === 0) return;
+  if (!["supervisor", "planer"].includes(getAuthRole())) return;
+
+  const missing = skus.filter(sku => {
+    const art = artBySku[sku];
+    return art && !art._costPriceLoaded && !costPriceLoadingInFlight.has(sku);
+  });
+  if (missing.length === 0) return;
+
+  missing.forEach(sku => costPriceLoadingInFlight.add(sku));
+
+  try {
+    const batchSize = 150;
+    for (let i = 0; i < missing.length; i += batchSize) {
+      const batch = missing.slice(i, i + batchSize);
+      const url = authUrl(WEBHOOK_URL + "?action=articles_costprices&skus=" + encodeURIComponent(batch.join(",")));
+      const resp = await fetch(url);
+      if (!resp.ok) { console.warn("[CostPrices] HTTP-Fehler", resp.status, "für Batch", i); continue; }
+      const json = await resp.json();
+      if (!json.ok) {
+        console.warn("[CostPrices] Backend-Fehler:", json.error, "code:", json.code);
+        if (json.code === 401) { clearAuth(); requireLogin(); return; }
+        continue;
+      }
+
+      const bySku = {};
+      (json.costPrices || []).forEach(cp => { bySku[cp.sku] = cp.costPrice; });
+      batch.forEach(sku => {
+        const art = artBySku[sku];
+        if (!art) return;
+        art.costPrice = bySku[sku] !== undefined ? bySku[sku] : 0;
+        art._costPriceLoaded = true;
+      });
+    }
+    if (onUpdate) onUpdate();
+  } catch(e) {
+    console.warn("ensureCostPricesLoaded:", e);
+  } finally {
+    missing.forEach(sku => costPriceLoadingInFlight.delete(sku));
   }
 }
 
@@ -1921,6 +1983,7 @@ function renderPreise() {
   const masterSkus = [...new Set(geplant.map(a => getMasterOf(a)).filter(Boolean).map(m => m.sku))];
   ensureDetailsLoaded([...geplant.map(a => a.sku), ...masterSkus], () => renderPreise());
   ensureRivalsLoaded(geplant.map(a => a.sku), () => renderPreise());
+  ensureCostPricesLoaded([...geplant.map(a => a.sku), ...masterSkus], () => renderPreise());
 
   const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
   const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
@@ -2139,7 +2202,7 @@ function _buildPreisSlaveRow(slave, withTopBorder) {
   const sku    = slave.sku;
   const p      = preise[sku] || {};
   const loaded = slave._detailLoaded;
-  const ek     = loaded ? Number(slave.costPrice) || 0 : 0;
+  const ek     = slave._costPriceLoaded ? Number(slave.costPrice) || 0 : 0;
   const geplantMenge = planned[sku] || 0;
   const gepicktMenge = committed[sku] || 0;
   const isRestposten = !!slave.restposten;
