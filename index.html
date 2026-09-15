@@ -292,6 +292,19 @@
       <div id="messen-config-status" style="margin-top:6px;font-size:12px;"></div>
     </div>
 
+    <div id="settings-lagerplaetze" style="display:none;margin-top:14px;padding-top:14px;border-top:0.5px solid var(--border);">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Lagerplätze verwalten (Inventur)</div>
+      <div class="muted" style="font-size:11px;margin-bottom:10px;">Diese Plätze stehen bei der Inventur allen Rollen zur Auswahl. Nur Supervisor kann sie anlegen/entfernen.</div>
+      <div id="lagerplaetze-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
+      <button id="btn-add-lagerplatz-row" class="btn" style="width:100%;margin-bottom:10px;">
+        <i class="ti ti-plus"></i> Weiterer Lagerplatz
+      </button>
+      <button id="btn-save-lagerplaetze" class="btn btn-info" style="width:100%;">
+        <i class="ti ti-device-floppy"></i> Lagerplätze speichern
+      </button>
+      <div id="lagerplaetze-status" style="margin-top:6px;font-size:12px;"></div>
+    </div>
+
     <div id="settings-versand" style="display:none;margin-top:14px;padding-top:14px;border-top:0.5px solid var(--border);">
       <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Versand-Einstellungen</div>
       <div class="muted" style="font-size:11px;margin-bottom:10px;">An diese Adresse geht bei Verkäufen mit Versand-Position automatisch eine E-Mail (z.B. eine Asana-Projekt-E-Mail-Adresse, damit dort direkt eine Aufgabe entsteht).</div>
@@ -428,6 +441,12 @@ let inventurDetailSku = null;
 let inventurSearch    = "";
 let inventurLieferant = "";
 let inventurKategorie = "";
+// Feste, vom Supervisor gepflegte Lagerplatz-Liste (siehe Einstellungen) -
+// ersetzt Freitext-Anlegen bei der Zählung selbst, um Tippfehler-Varianten
+// als eigenständige Plätze zu vermeiden. Lazy geladen (erst wenn der
+// Inventur-Tab oder die Einstellungen tatsächlich geöffnet werden).
+let inventurLagerplaetze = [];
+let inventurLagerplaetzeLoaded = false;
 let parkedCartFilter = "";
 
 const PICKORTE = [
@@ -599,6 +618,66 @@ async function saveMessenConfigToServer() {
       statusEl.style.color = "var(--ok)";
       statusEl.textContent = "Gespeichert.";
       if (messeLabel) applyMesseTheme(messeLabel);
+    } else {
+      statusEl.style.color = "var(--err)";
+      statusEl.textContent = json.error || "Fehler beim Speichern.";
+    }
+  } catch(e) {
+    statusEl.style.color = "var(--err)";
+    statusEl.textContent = "Verbindungsfehler: " + e.message;
+  }
+}
+
+// ── INVENTUR-LAGERPLÄTZE (Einstellungen, nur Supervisor speichert) ────────
+async function loadInventurLagerplaetzeList(onDone) {
+  if (!WEBHOOK_URL) return;
+  try {
+    const resp = await fetch(authUrl(WEBHOOK_URL + "?action=inventur_lagerplaetze_get"));
+    const json = await resp.json();
+    if (json.ok) inventurLagerplaetze = json.lagerplaetze || [];
+  } catch(e) { console.warn("loadInventurLagerplaetzeList:", e); }
+  inventurLagerplaetzeLoaded = true;
+  if (onDone) onDone();
+}
+
+function renderLagerplaetzeRows(list) {
+  const wrap = qs("#lagerplaetze-list");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const rows = (list && list.length) ? list : [""];
+  rows.forEach(name => addLagerplatzRow(name));
+}
+
+function addLagerplatzRow(name) {
+  const wrap = qs("#lagerplaetze-list");
+  const row = document.createElement("div");
+  row.className = "lagerplatz-row";
+  row.style.cssText = "display:flex;gap:6px;align-items:center;";
+  row.innerHTML = `
+    <input type="text" class="lp-name" placeholder="z.B. Messestand A" value="${(name||"").replace(/"/g,"&quot;")}" style="flex:1;" />
+    <button class="btn-sm btn-danger btn-remove-lagerplatz-row" title="Entfernen"><i class="ti ti-trash"></i></button>`;
+  row.querySelector(".btn-remove-lagerplatz-row").addEventListener("click", () => row.remove());
+  wrap.appendChild(row);
+}
+
+async function saveLagerplaetzeToServer() {
+  const names = [...document.querySelectorAll(".lagerplatz-row")]
+    .map(row => row.querySelector(".lp-name").value.trim())
+    .filter(Boolean);
+
+  const statusEl = qs("#lagerplaetze-status");
+  statusEl.style.color = "var(--text2)";
+  statusEl.textContent = "Speichere…";
+  try {
+    const url = WEBHOOK_URL + "?action=inventur_lagerplaetze_save&token=" + encodeURIComponent(getAuthToken()) +
+      "&list=" + encodeURIComponent(JSON.stringify(names));
+    const resp = await fetch(url);
+    const json = await resp.json();
+    if (json.ok) {
+      inventurLagerplaetze = json.lagerplaetze || names;
+      inventurLagerplaetzeLoaded = true;
+      statusEl.style.color = "var(--ok)";
+      statusEl.textContent = "Gespeichert.";
     } else {
       statusEl.style.color = "var(--err)";
       statusEl.textContent = json.error || "Fehler beim Speichern.";
@@ -3247,7 +3326,10 @@ function runInventurSearch() {
 function _buildInventurCard(art) {
   const sku = art.sku;
   const inv = inventur[sku];
-  const hasInventur = !!(inv && inv.events && inv.events.length > 0);
+  // hasInventur richtet sich nach byPlace, nicht nach events.length - nach
+  // einem Reset (siehe renderInventurDetail) ist byPlace leer, auch wenn
+  // events (als Historie) weiterhin Einträge enthält.
+  const hasInventur = !!(inv && inv.byPlace && Object.keys(inv.byPlace).length > 0);
   const referenceQty   = hasInventur ? inv.total : (committed[sku] || 0);
   const referenceLabel = hasInventur ? "Aktuelle Menge" : "System-Soll";
 
@@ -3287,6 +3369,13 @@ function renderInventurDetail(wrap) {
   const art = articles.find(a => a.sku === inventurDetailSku);
   if (!art) { inventurDetailSku = null; renderInventurliste(); return; }
 
+  // Lagerplatz-Liste lazy nachladen, falls noch nicht geschehen - re-rendert
+  // sich selbst, sobald die Antwort da ist (gleiches Muster wie
+  // ensureDetailsLoaded()).
+  if (!inventurLagerplaetzeLoaded) {
+    loadInventurLagerplaetzeList(() => renderInventurDetail(wrap));
+  }
+
   wrap.innerHTML = "";
 
   const backBtn = document.createElement("button");
@@ -3298,7 +3387,10 @@ function renderInventurDetail(wrap) {
 
   const sku = art.sku;
   const inv = inventur[sku] || { total: 0, byPlace: {}, events: [] };
-  const hasInventur    = inv.events.length > 0;
+  // hasInventur richtet sich nach byPlace, nicht nach events.length - nach
+  // einem Reset ist byPlace leer, auch wenn events (Historie) weiterhin
+  // Einträge von vor dem Reset enthält.
+  const hasInventur    = Object.keys(inv.byPlace).length > 0;
   const referenceQty   = hasInventur ? inv.total : (committed[sku] || 0);
   const referenceLabel = hasInventur ? "Aktuelle Menge" : "System-Soll";
 
@@ -3322,72 +3414,89 @@ function renderInventurDetail(wrap) {
   const formTitle = document.createElement("div");
   formTitle.className = "merkliste-title";
   formTitle.style.marginBottom = "8px";
-  formTitle.textContent = "Neue Zählung erfassen";
+  formTitle.textContent = "Zählung erfassen";
   wrap.appendChild(formTitle);
-
-  // Bekannte Lagerplätze aus bereits vorhandenen Zählungen sammeln (kein
-  // eigenes Verwaltungs-/Settings-Feld nötig) - Autocomplete-Vorschlag,
-  // Freitext bleibt trotzdem möglich, um neue Plätze anzulegen.
-  const knownPlaces = [...new Set(
-    Object.values(inventur).flatMap(d => Object.keys(d.byPlace || {}))
-  )].sort();
 
   const formWrap = document.createElement("div");
   formWrap.style.cssText = "background:var(--bg2);border-radius:var(--r);padding:10px;margin-bottom:18px;";
-  formWrap.innerHTML = `
-    <div class="ac-wrap" style="margin-bottom:8px;">
-      <input type="text" id="inv-lagerplatz" placeholder="z.B. Messestand A, oder neu eingeben" autocomplete="off" />
-      <div class="ac-dropdown" id="ac-inv-lagerplatz" style="display:none;"></div>
-    </div>
-    <input type="number" id="inv-menge" min="0" step="1" placeholder="Menge" style="margin-bottom:8px;" />
-    <button class="btn btn-ok btn-save-inventur" style="width:100%;justify-content:center;">
-      <i class="ti ti-device-floppy"></i> Zählung speichern
-    </button>
-  `;
+
+  if (!inventurLagerplaetzeLoaded) {
+    formWrap.innerHTML = `<div class="muted" style="padding:8px 0;">Lagerplätze werden geladen…</div>`;
+  } else if (inventurLagerplaetze.length === 0) {
+    formWrap.innerHTML = `<div class="muted" style="padding:8px 0;">Noch keine Lagerplätze angelegt.${getAuthRole() === "supervisor" ? " Unter Einstellungen → Lagerplätze verwalten anlegen." : " Bitte den Supervisor, Lagerplätze anzulegen."}</div>`;
+  } else {
+    const rowsHTML = inventurLagerplaetze.map(place => {
+      const current = inv.byPlace[place] !== undefined ? inv.byPlace[place] : 0;
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--border);">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;">${place}</div>
+          <div class="muted" style="font-size:11px;">aktuell: ${current}</div>
+        </div>
+        <input type="number" min="0" step="1" class="inv-place-inp" data-place="${place}" data-current="${current}" value="${current}" style="width:70px;" />
+      </div>`;
+    }).join("");
+
+    formWrap.innerHTML = rowsHTML + `
+      <button class="btn btn-ok btn-save-inventur" style="width:100%;justify-content:center;margin-top:10px;">
+        <i class="ti ti-device-floppy"></i> Zählung speichern
+      </button>`;
+
+    formWrap.querySelector(".btn-save-inventur").addEventListener("click", async () => {
+      const inputs = formWrap.querySelectorAll(".inv-place-inp");
+      let changedCount = 0;
+
+      if (!inventur[sku]) inventur[sku] = { total: 0, byPlace: {}, events: [] };
+      const data = inventur[sku];
+
+      inputs.forEach(inp => {
+        const place   = inp.dataset.place;
+        const current = Number(inp.dataset.current) || 0;
+        const raw     = parseInt(inp.value, 10);
+        const newVal  = (isNaN(raw) || raw < 0) ? 0 : raw;
+        if (newVal === current) return; // unverändert - keine Buchung, kein Rauschen in der Historie
+        changedCount++;
+
+        data.byPlace[place] = newVal;
+        data.events.push({ lagerplatz: place, oldMenge: current, newMenge: newVal, ts: new Date().toISOString(), user: currentUser });
+        sendWebhook("INVENTUR_SET", { sku, art, ref: place, menge: newVal });
+      });
+
+      if (changedCount === 0) {
+        showNotification("Keine Änderungen zum Speichern.", "warn");
+        return;
+      }
+
+      data.total = Object.values(data.byPlace).reduce((s, m) => s + m, 0);
+      showNotification(`${changedCount} Lagerplatz-Zählung${changedCount > 1 ? "en" : ""} gespeichert`, "ok");
+      renderInventurDetail(wrap);
+    });
+  }
   wrap.appendChild(formWrap);
 
-  makeAutocomplete(qs("#inv-lagerplatz"), qs("#ac-inv-lagerplatz"), () => knownPlaces, val => {
-    qs("#inv-lagerplatz").value = val;
-  });
+  // Reset nur für Supervisor, und nur wenn überhaupt schon gezählt wurde -
+  // setzt byPlace zurück auf System-Soll-Basis, siehe Backend-Kommentar in
+  // buildRows()/loadState(). Alte Historie bleibt sichtbar, wird aber
+  // durch einen Reset-Marker als "davor" gekennzeichnet.
+  if (getAuthRole() === "supervisor" && hasInventur) {
+    const resetBtn = document.createElement("button");
+    resetBtn.className = "btn-sm btn-danger";
+    resetBtn.style.marginBottom = "18px";
+    resetBtn.innerHTML = `<i class="ti ti-restore"></i> Inventur zurücksetzen (Start bei System-Soll)`;
+    resetBtn.addEventListener("click", async () => {
+      const soll = committed[sku] || 0;
+      if (!confirm(`Inventur für "${art.name}" wirklich zurücksetzen?\n\nAlle bisherigen Zählungen werden für die aktuelle Anzeige ignoriert (bleiben aber als Historie sichtbar). Es wird wieder bei System-Soll (${soll}) begonnen.`)) return;
 
-  formWrap.querySelector(".btn-save-inventur").addEventListener("click", async () => {
-    const lagerplatz = qs("#inv-lagerplatz").value.trim();
-    const mengeRaw    = parseInt(qs("#inv-menge").value, 10);
-    if (!lagerplatz) { showNotification("Bitte einen Lagerplatz angeben.", "warn"); return; }
-    if (isNaN(mengeRaw) || mengeRaw < 0) { showNotification("Bitte eine gültige Menge angeben.", "warn"); return; }
+      if (!inventur[sku]) inventur[sku] = { total: 0, byPlace: {}, events: [] };
+      inventur[sku].byPlace = {};
+      inventur[sku].total = 0;
+      inventur[sku].events.push({ reset: true, ts: new Date().toISOString(), user: currentUser });
 
-    // Optimistisch lokal aktualisieren, gleiches Prinzip wie überall sonst
-    // im Tool - Nutzer sieht sofort das Ergebnis, ohne auf den nächsten
-    // Server-Refresh zu warten.
-    if (!inventur[sku]) inventur[sku] = { total: 0, byPlace: {}, events: [] };
-    const data = inventur[sku];
-    const oldMenge = data.byPlace[lagerplatz] !== undefined ? data.byPlace[lagerplatz] : 0;
-    data.byPlace[lagerplatz] = mengeRaw;
-    data.total = Object.values(data.byPlace).reduce((s, m) => s + m, 0);
-    data.events.push({ lagerplatz, oldMenge, newMenge: mengeRaw, ts: new Date().toISOString(), user: currentUser });
-
-    touchSku(sku);
-    await sendWebhook("INVENTUR_SET", { sku, art, ref: lagerplatz, menge: mengeRaw });
-    showNotification(`Zählung gespeichert: ${lagerplatz} = ${mengeRaw}`, "ok");
-    renderInventurDetail(wrap);
-  });
-
-  if (Object.keys(inv.byPlace).length > 0) {
-    const distTitle = document.createElement("div");
-    distTitle.className = "merkliste-title";
-    distTitle.style.marginBottom = "8px";
-    distTitle.textContent = "Aktuelle Verteilung";
-    wrap.appendChild(distTitle);
-
-    const distWrap = document.createElement("div");
-    distWrap.style.cssText = "display:flex;flex-direction:column;gap:6px;margin-bottom:18px;";
-    Object.keys(inv.byPlace).sort().forEach(place => {
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex;justify-content:space-between;background:var(--bg2);border-radius:var(--r);padding:8px 12px;";
-      row.innerHTML = `<span style="font-size:13px;">${place}</span><span style="font-size:13px;font-weight:500;">${inv.byPlace[place]}x</span>`;
-      distWrap.appendChild(row);
+      touchSku(sku);
+      await sendWebhook("INVENTUR_RESET", { sku, art });
+      showNotification("Inventur zurückgesetzt", "warn");
+      renderInventurDetail(wrap);
     });
-    wrap.appendChild(distWrap);
+    wrap.appendChild(resetBtn);
   }
 
   const histTitle = document.createElement("div");
@@ -3404,8 +3513,13 @@ function renderInventurDetail(wrap) {
       const d = parseServerTimestamp(e.ts);
       const dLabel = d ? d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "Datum unbekannt";
       const row = document.createElement("div");
-      row.style.cssText = "font-size:12px;color:var(--text2);padding:4px 0;display:flex;align-items:center;gap:6px;";
-      row.innerHTML = `<i class="ti ti-check" style="font-size:11px;color:var(--ok);"></i> ${dLabel} · ${e.user || "?"} hat Menge ${e.lagerplatz} geändert: Alt: ${e.oldMenge} Aktuell: ${e.newMenge}`;
+      if (e.reset) {
+        row.style.cssText = "font-size:12px;color:var(--err);padding:8px 0 4px;margin-top:4px;display:flex;align-items:center;gap:6px;border-top:1px dashed var(--border);font-weight:500;";
+        row.innerHTML = `<i class="ti ti-restore" style="font-size:11px;"></i> ${dLabel} · ${e.user || "?"} hat die Inventur zurückgesetzt`;
+      } else {
+        row.style.cssText = "font-size:12px;color:var(--text2);padding:4px 0;display:flex;align-items:center;gap:6px;";
+        row.innerHTML = `<i class="ti ti-check" style="font-size:11px;color:var(--ok);"></i> ${dLabel} · ${e.user || "?"} hat Menge ${e.lagerplatz} geändert: Alt: ${e.oldMenge} Aktuell: ${e.newMenge}`;
+      }
       histWrap.appendChild(row);
     });
     wrap.appendChild(histWrap);
@@ -4392,12 +4506,15 @@ function sendWebhook(action, data) {
     case "INVENTUR_SET":
       payload.menge = data.menge || 0;
       break;
+    case "INVENTUR_RESET":
+      break; // keine Zusatzfelder nötig
   }
 
-  if (action === "COMMIT" || action === "COMMIT_UNDO" || action === "INVENTUR_SET") touchSku(sku);
+  if (action === "COMMIT" || action === "COMMIT_UNDO" || action === "INVENTUR_SET" || action === "INVENTUR_RESET") touchSku(sku);
 
   const debounceKey =
     (action === "PLAN_SET" || action === "REMOVE") ? "plan:" + sku :
+    (action === "INVENTUR_SET") ? "inventur:" + sku + ":" + (data.ref || "") :
     (action === "CART_ITEM_SET")   ? "cartitem:" + data.cartUuid + ":" + sku :
     (action === "CART_HEADER_SET") ? "cartheader:" + data.cartUuid :
     null;
@@ -4606,19 +4723,25 @@ qs("#btn-settings").addEventListener("click", async () => {
       qs("#settings-pins").style.display = "block";
       qs("#settings-messen").style.display = "block";
       qs("#settings-versand").style.display = "block";
+      qs("#settings-lagerplaetze").style.display = "block";
       loadPinStatus();
       const merged = await fetchMergedMessenList();
       renderMessenConfigRows(merged);
       loadShippingSettings();
+      await loadInventurLagerplaetzeList();
+      renderLagerplaetzeRows(inventurLagerplaetze);
     } else {
       qs("#settings-pins").style.display = "none";
       qs("#settings-messen").style.display = "none";
       qs("#settings-versand").style.display = "none";
+      qs("#settings-lagerplaetze").style.display = "none";
     }
   }
 });
 
 qs("#btn-add-messe-row").addEventListener("click", () => addMesseConfigRow({ name: "", bg: "#185fa5", fg: "#ffffff" }));
+qs("#btn-add-lagerplatz-row").addEventListener("click", () => addLagerplatzRow(""));
+qs("#btn-save-lagerplaetze").addEventListener("click", saveLagerplaetzeToServer);
 qs("#btn-save-messen-config").addEventListener("click", saveMessenConfigToServer);
 qs("#btn-save-shipping").addEventListener("click", saveShippingSettings);
 
