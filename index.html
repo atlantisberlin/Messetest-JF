@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Messe-Tool</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23185fa5'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle' fill='white'%3E%E2%9A%93%3C/text%3E%3C/svg%3E" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23185fa5'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle' fill='white'%3E%E2%9A%93%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -56,8 +58,9 @@
     .badge.info{background:var(--info-bg);color:var(--info);}
     .badge.err{background:var(--err-bg);color:var(--err);}
     .muted{color:var(--text2);font-size:13px;}
-    .tabs{display:flex;border-bottom:0.5px solid var(--border);}
-    .tab{flex:1;padding:10px 4px;border:none;background:none;cursor:pointer;font-size:11px;color:var(--text2);border-bottom:2px solid transparent;display:flex;flex-direction:column;align-items:center;gap:3px;transition:color .15s;}
+    .tabs{display:flex;border-bottom:0.5px solid var(--border);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+    .tabs::-webkit-scrollbar{display:none;}
+    .tab{flex:0 0 auto;min-width:64px;padding:10px 10px;border:none;background:none;cursor:pointer;font-size:11px;color:var(--text2);border-bottom:2px solid transparent;display:flex;flex-direction:column;align-items:center;gap:3px;transition:color .15s;white-space:nowrap;}
     .tab.active{color:var(--info);border-bottom-color:var(--info);}
     .tab i{font-size:20px;}
     .notification{margin:8px 16px 0;padding:8px 12px;border-radius:var(--r);font-size:13px;}
@@ -4204,6 +4207,7 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
   currentView = t.dataset.tab;
   prepDetailSku       = null;
   merklisteDetailSku  = null;
+  t.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
   // v18-Update: laufender Refresh nur in Kommission (siehe
   // startAutoRefresh) - beim Wechsel in einen anderen Tab stattdessen
   // einmalig einen frischen Stand holen, damit man nicht auf den nächsten
