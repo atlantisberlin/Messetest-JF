@@ -345,6 +345,12 @@ let slavesBySku = {};
 
 let messeLabel  = "";
 const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycby5v4wXquyaLMsm1hfiRagTLyvbsARGtj2z25VXyNKGQQhpHsXjaLdOlk3s7ry_GkTp/exec";
+// v20: stündlich per Trigger aktualisierte Katalog-Datei, liegt im selben
+// GitHub-Pages-Repo wie diese HTML-Datei - lädt komplett ohne Apps Script/
+// BigQuery, kein Kontingent-Verbrauch beim Lesen. Läuft ins Leere (Fallback
+// auf den bisherigen Live-Weg), falls die Datei fehlt oder zu alt ist.
+const CATALOG_JSON_URL   = "https://messe.atlantis-berlin.de/articles.json";
+const CATALOG_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6h - älter deutet auf einen ausgefallenen Trigger hin
 let WEBHOOK_URL = WEBHOOK_URL_DEFAULT;
 let currentView = "prep";
 let currentUser = "";
@@ -1143,6 +1149,43 @@ function clearArticleCache() {
 }
 function getCacheInfo() { return null; }
 
+// Versucht die stündlich aktualisierte Katalog-Datei von GitHub Pages zu
+// laden (siehe pushCatalogToGitHub() im Backend). Gibt true bei Erfolg
+// zurück (articles ist dann vollständig befüllt UND als "Detail bereits
+// geladen" markiert - kein ensureDetailsLoaded()/ensureRivalsLoaded()
+// mehr nötig), sonst false - der Aufrufer fällt dann auf den bisherigen
+// Live-Weg zurück. cache:"no-store" + Cache-Busting-Query-Parameter, damit
+// nicht versehentlich eine alte Browser-/CDN-Kopie verwendet wird.
+async function tryLoadCatalogFromGitHub() {
+  try {
+    const resp = await fetch(CATALOG_JSON_URL + "?_=" + Date.now(), { cache: "no-store" });
+    if (!resp.ok) return false;
+    const json = await resp.json();
+    if (!json || !Array.isArray(json.articles) || json.articles.length === 0) return false;
+
+    if (json.generatedAt) {
+      const age = Date.now() - new Date(json.generatedAt).getTime();
+      if (isNaN(age) || age > CATALOG_MAX_AGE_MS) {
+        console.warn("[Katalog] Datei zu alt oder Datum ungültig, falle auf Live-Daten zurück.");
+        return false;
+      }
+    }
+
+    setLoadingStep(`${json.articles.length} Artikel aus Katalog-Datei geladen…`, 80);
+    await sleep(100);
+    buildArticleLookups(json.articles);
+    // Katalog-Datei enthält bereits alles - Detail- und Mitbewerberdaten
+    // gelten für jeden Artikel als geladen, kein Nachladen nötig.
+    articles.forEach(a => { a._detailLoaded = true; a._rivalLoaded = true; });
+    setLoadingStep(`${articles.length} Artikel bereit`, 95);
+    await sleep(150);
+    return true;
+  } catch(e) {
+    console.warn("[Katalog] Nicht ladbar, falle auf Live-Daten zurück:", e);
+    return false;
+  }
+}
+
 async function loadArticles(forceReload = false) {
   showLoading();
 
@@ -1160,6 +1203,15 @@ async function loadArticles(forceReload = false) {
         return true;
       }
     }
+
+    // v20: erst versuchen, den stündlich aktualisierten Gesamt-Katalog
+    // direkt von GitHub Pages zu laden (bereits inkl. Preis/Lager/Bild/
+    // Mitbewerber) - deutlich schneller, kein Kontingent-Verbrauch. Erst
+    // bei Fehlschlag (Datei fehlt, kaputt, zu alt) auf den bisherigen
+    // Live-Weg über Apps Script/BigQuery zurückfallen.
+    setLoadingStep("Lade Artikel-Katalog…", 20);
+    const catalogOk = await tryLoadCatalogFromGitHub();
+    if (catalogOk) return true;
 
     if (!WEBHOOK_URL) {
       hideLoading();
