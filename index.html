@@ -1077,7 +1077,11 @@ function showNotification(msg, type="ok") {
   const area = qs("#notification-area");
   clearTimeout(notifTimer);
   area.innerHTML = `<div class="notification notif-${type}">${msg}</div>`;
-  notifTimer = setTimeout(() => area.innerHTML="", type === "err" ? 8000 : 3000);
+  // "warn" bekommt seit v23 dieselbe längere Anzeigedauer wie "err" - seit
+  // dem Asana-Abschluss können Warnungen (z.B. "Verkauf abgeschlossen,
+  // aber Asana-Übergabe fehlgeschlagen: ...") genauso erklärungsbedürftigen
+  // Text enthalten wie echte Fehler.
+  notifTimer = setTimeout(() => area.innerHTML="", (type === "err" || type === "warn") ? 8000 : 3000);
 }
 
 async function copyToClipboard(value, label) {
@@ -4340,7 +4344,18 @@ function renderSalesListen(wrap) {
       kundePlzOrt: cart.kunde.plzOrt, kundeKontakt: cart.kunde.kontakt, kundeNotiz: cart.kunde.notiz,
     });
   };
-  custWrap.querySelectorAll("input").forEach(inp => inp.addEventListener("blur", saveKunde));
+  // Debounced statt pro Feld einzeln sync'en - beim Durchtabben durch
+  // mehrere Felder (Straße → PLZ → Kontakt → Notiz) soll EIN Sync-Aufruf
+  // rausgehen, nicht einer pro Feld. Der server-seitige Debounce-Key
+  // ("cartheader:"+cartUuid, siehe sendWebhook) fängt zwar Duplikate ab,
+  // aber verhindert nicht, dass hier überhaupt erst mehrere separate
+  // Aufrufe entstehen.
+  let kundeSaveTimer = null;
+  const debouncedSaveKunde = () => {
+    clearTimeout(kundeSaveTimer);
+    kundeSaveTimer = setTimeout(saveKunde, 400);
+  };
+  custWrap.querySelectorAll("input").forEach(inp => inp.addEventListener("blur", debouncedSaveKunde));
 
   const actionsWrap = document.createElement("div");
   actionsWrap.style.marginTop = "14px";
