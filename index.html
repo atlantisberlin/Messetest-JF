@@ -441,6 +441,7 @@ let inventurDetailSku = null;
 let inventurSearch    = "";
 let inventurLieferant = "";
 let inventurKategorie = "";
+let inventurNurMessestand = false;
 // Feste, vom Supervisor gepflegte Lagerplatz-Liste (siehe Einstellungen) -
 // ersetzt Freitext-Anlegen bei der Zählung selbst, um Tippfehler-Varianten
 // als eigenständige Plätze zu vermeiden. Lazy geladen (erst wenn der
@@ -3327,24 +3328,11 @@ function renderInventurliste() {
     return;
   }
 
-  const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
-
-  if (geplant.length === 0) {
-    wrap.innerHTML = `<div class="muted" style="text-align:center;padding:32px 0;">
-      <i class="ti ti-clipboard-check" style="font-size:36px;display:block;margin-bottom:10px;opacity:.4;"></i>
-      Noch keine Artikel geplant.<br>
-      <span style="font-size:12px;">Artikel in der Vorbereitung suchen und Menge setzen.</span>
-    </div>`;
-    return;
-  }
-
-  ensureDetailsLoaded(geplant.map(a => a.sku), () => renderInventurliste());
-
   const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
   const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
 
   wrap.innerHTML = `
-    <p class="muted" style="margin-bottom:12px;">Inventur je Artikel und Lagerplatz. Zeigt zunächst das System-Soll (kommissionierte Menge) - sobald ein Artikel gezählt wurde, zählt stattdessen die aktuelle Summe aller erfassten Lagerplätze.</p>
+    <p class="muted" style="margin-bottom:12px;">Inventur je Artikel und Lagerplatz - auch für Artikel, die z.B. per Direktlieferung an den Stand kamen, unabhängig von der Kommissionierung. Zeigt zunächst das System-Soll (kommissionierte Menge) - sobald ein Artikel gezählt wurde, zählt stattdessen die aktuelle Summe aller erfassten Lagerplätze.</p>
     <div class="filter-bar">
       <div class="search-bar" style="margin-bottom:8px;">
         <i class="ti ti-search"></i>
@@ -3358,6 +3346,10 @@ function renderInventurliste() {
         <input type="text" id="inventur-kategorie" placeholder="Kategorie …" value="${inventurKategorie}" />
         <div class="ac-dropdown" id="ac-inventur-kategorie" style="display:none;"></div>
       </div>
+      <label class="filter-toggle" style="margin-top:4px;">
+        <input type="checkbox" id="inventur-messestand" ${inventurNurMessestand ? "checked" : ""} />
+        Nur Messestand-Artikel
+      </label>
     </div>
     <div id="inventur-results"></div>
   `;
@@ -3371,6 +3363,7 @@ function renderInventurliste() {
   qs("#inventur-search").addEventListener("input", e => { inventurSearch = e.target.value; runInventurSearch(); });
   qs("#inventur-lieferant").addEventListener("input", e => { inventurLieferant = e.target.value; runInventurSearch(); });
   qs("#inventur-kategorie").addEventListener("input", e => { inventurKategorie = e.target.value; runInventurSearch(); });
+  qs("#inventur-messestand").addEventListener("change", e => { inventurNurMessestand = e.target.checked; runInventurSearch(); });
 
   runInventurSearch();
 }
@@ -3379,13 +3372,27 @@ function runInventurSearch() {
   const resultsEl = qs("#inventur-results");
   if (!resultsEl) return;
 
-  const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
-
   const sq = inventurSearch.trim().toLowerCase();
   const sl = inventurLieferant.trim().toLowerCase();
   const sk = inventurKategorie.trim().toLowerCase();
 
-  const filtered = geplant.filter(a => {
+  // Suche/Filter/Checkbox erforderlich, bevor überhaupt gefiltert wird -
+  // sonst müssten alle ~32.000 Artikel auf einmal gerendert (und ihre
+  // Details geladen) werden. Gleiches Muster wie die Preisliste im
+  // Verkauf-Tab.
+  const hasFilter = sq || sl || sk || inventurNurMessestand;
+  if (!hasFilter) {
+    resultsEl.innerHTML = `<div class="muted" style="text-align:center;padding:24px 0;font-size:13px;">
+      <i class="ti ti-filter" style="font-size:28px;display:block;margin-bottom:8px;opacity:.5;"></i>
+      Suche oder Filter verwenden um Artikel zu finden.
+    </div>`;
+    return;
+  }
+
+  let base = articles.filter(a => !isMaster(a));
+  if (inventurNurMessestand) base = base.filter(a => (planned[a.sku] || 0) > 0);
+
+  const filtered = base.filter(a => {
     if (sl && !(a.supplier||"").toLowerCase().includes(sl)) return false;
     if (sk && !(a.category||"").toLowerCase().includes(sk)) return false;
     if (sq) {
@@ -3394,7 +3401,7 @@ function runInventurSearch() {
       if (!tokens.every(t => haystack.includes(t))) return false;
     }
     return true;
-  });
+  }).slice(0, 100); // Sicherheitsgrenze, falls ein Filter allein noch sehr viele Treffer ergibt
 
   resultsEl.innerHTML = "";
 
@@ -3403,10 +3410,12 @@ function runInventurSearch() {
     return;
   }
 
+  ensureDetailsLoaded(filtered.map(a => a.sku), () => runInventurSearch());
+
   const info = document.createElement("div");
   info.className = "muted";
   info.style.cssText = "font-size:12px;margin-bottom:10px;";
-  info.textContent = `${filtered.length} Artikel`;
+  info.textContent = `${filtered.length} Artikel${filtered.length === 100 ? " (weiter eingrenzen für mehr Treffer)" : ""}`;
   resultsEl.appendChild(info);
 
   filtered.sort((a, b) => a.name.localeCompare(b.name, "de"))
