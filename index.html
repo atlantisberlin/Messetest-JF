@@ -3815,7 +3815,7 @@ function ensureActiveCart() {
 
 function createNewCart() {
   const uuid = genUUID();
-  carts[uuid] = { status: "OFFEN", kunde: { name: "", strasse: "", plzOrt: "", kontakt: "", notiz: "" }, items: [] };
+  carts[uuid] = { status: "OFFEN", kunde: { name: "", strasse: "", plzOrt: "", email: "", telefon: "", notiz: "" }, items: [] };
   activeCartUuid = uuid;
   saveUIState();
   touchSku(uuid);
@@ -3878,7 +3878,7 @@ function parkCart(uuid) {
   sendWebhook("CART_HEADER_SET", {
     cartUuid: uuid, status: "GEPARKT",
     kundeName: cart.kunde.name, kundeStrasse: cart.kunde.strasse,
-    kundePlzOrt: cart.kunde.plzOrt, kundeKontakt: cart.kunde.kontakt, kundeNotiz: cart.kunde.notiz,
+    kundePlzOrt: cart.kunde.plzOrt, kundeEmail: cart.kunde.email, kundeTelefon: cart.kunde.telefon, kundeNotiz: cart.kunde.notiz,
   });
 }
 
@@ -4104,7 +4104,7 @@ function discardActiveCart(uuid) {
   sendWebhook("CART_HEADER_SET", {
     cartUuid: uuid, status: "GELOESCHT",
     kundeName: cart.kunde.name, kundeStrasse: cart.kunde.strasse,
-    kundePlzOrt: cart.kunde.plzOrt, kundeKontakt: cart.kunde.kontakt, kundeNotiz: cart.kunde.notiz,
+    kundePlzOrt: cart.kunde.plzOrt, kundeEmail: cart.kunde.email, kundeTelefon: cart.kunde.telefon, kundeNotiz: cart.kunde.notiz,
   });
   delete carts[uuid];
   activeCartUuid = null;
@@ -4389,8 +4389,10 @@ function renderSalesListen(wrap) {
     <input type="text" id="cart-kunde-strasse" value="${cart.kunde.strasse || ""}" style="margin-bottom:8px;" />
     <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">PLZ &amp; Ort</label>
     <input type="text" id="cart-kunde-plzort" value="${cart.kunde.plzOrt || ""}" style="margin-bottom:8px;" />
-    <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Telefon oder E-Mail</label>
-    <input type="text" id="cart-kunde-kontakt" value="${cart.kunde.kontakt || ""}" style="margin-bottom:8px;" />
+    <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">E-Mail *</label>
+    <input type="email" id="cart-kunde-email" value="${cart.kunde.email || ""}" placeholder="kunde@beispiel.de" style="margin-bottom:8px;" />
+    <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Telefonnummer</label>
+    <input type="tel" id="cart-kunde-telefon" value="${cart.kunde.telefon || ""}" style="margin-bottom:8px;" />
     <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Notiz</label>
     <input type="text" id="cart-kunde-notiz" value="${cart.kunde.notiz || ""}" style="margin-bottom:8px;" />` : ""}
   `;
@@ -4401,14 +4403,16 @@ function renderSalesListen(wrap) {
     if (hasVersand) {
       cart.kunde.strasse = qs("#cart-kunde-strasse")?.value.trim() || "";
       cart.kunde.plzOrt  = qs("#cart-kunde-plzort")?.value.trim() || "";
-      cart.kunde.kontakt = qs("#cart-kunde-kontakt")?.value.trim() || "";
+      cart.kunde.email   = qs("#cart-kunde-email")?.value.trim() || "";
+      cart.kunde.telefon = qs("#cart-kunde-telefon")?.value.trim() || "";
       cart.kunde.notiz   = qs("#cart-kunde-notiz")?.value.trim() || "";
     }
     touchSku(uuid);
     sendWebhook("CART_HEADER_SET", {
       cartUuid: uuid, status: cart.status,
       kundeName: cart.kunde.name, kundeStrasse: cart.kunde.strasse,
-      kundePlzOrt: cart.kunde.plzOrt, kundeKontakt: cart.kunde.kontakt, kundeNotiz: cart.kunde.notiz,
+      kundePlzOrt: cart.kunde.plzOrt, kundeEmail: cart.kunde.email,
+      kundeTelefon: cart.kunde.telefon, kundeNotiz: cart.kunde.notiz,
     });
   };
   // Debounced statt pro Feld einzeln sync'en - beim Durchtabben durch
@@ -4450,6 +4454,10 @@ function renderSalesListen(wrap) {
       saveKunde();
       if (hasVersand && !cart.kunde.strasse) {
         showNotification("Für den Versand bitte Adresse eintragen.", "warn");
+        return;
+      }
+      if (hasVersand && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cart.kunde.email || "")) {
+        showNotification("Für den Versand bitte eine gültige E-Mail-Adresse eintragen.", "warn");
         return;
       }
       openSaleCompleteDialog(uuid);
@@ -4526,7 +4534,7 @@ function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
       sendWebhook("CART_HEADER_SET", {
         cartUuid: id, status: "OFFEN",
         kundeName: c.kunde.name, kundeStrasse: c.kunde.strasse,
-        kundePlzOrt: c.kunde.plzOrt, kundeKontakt: c.kunde.kontakt, kundeNotiz: c.kunde.notiz,
+        kundePlzOrt: c.kunde.plzOrt, kundeEmail: c.kunde.email, kundeTelefon: c.kunde.telefon, kundeNotiz: c.kunde.notiz,
       });
       saveUIState();
       renderSales();
@@ -4537,7 +4545,7 @@ function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
       sendWebhook("CART_HEADER_SET", {
         cartUuid: id, status: "GELOESCHT",
         kundeName: c.kunde.name, kundeStrasse: c.kunde.strasse,
-        kundePlzOrt: c.kunde.plzOrt, kundeKontakt: c.kunde.kontakt, kundeNotiz: c.kunde.notiz,
+        kundePlzOrt: c.kunde.plzOrt, kundeEmail: c.kunde.email, kundeTelefon: c.kunde.telefon, kundeNotiz: c.kunde.notiz,
       });
       delete carts[id];
       renderSales();
@@ -4800,7 +4808,8 @@ function sendWebhook(action, data) {
       payload.kundeName    = data.kundeName    || "";
       payload.kundeStrasse = data.kundeStrasse || "";
       payload.kundePlzOrt  = data.kundePlzOrt  || "";
-      payload.kundeKontakt = data.kundeKontakt || "";
+      payload.kundeEmail   = data.kundeEmail   || "";
+      payload.kundeTelefon = data.kundeTelefon || "";
       payload.kundeNotiz   = data.kundeNotiz   || "";
       break;
     case "CART_ITEM_SET":
