@@ -580,16 +580,23 @@ function renderMessenConfigRows(list) {
   rows.forEach(m => addMesseConfigRow(m));
 }
 
-// Akzeptiert entweder eine vollständige Asana-Projekt-URL
-// (https://app.asana.com/0/1206345678901234/list) oder direkt die
-// numerische ID - zieht in beiden Fällen nur die reinen Ziffern raus,
-// damit der Nutzer nicht selbst nach der ID suchen muss.
+// Akzeptiert entweder die reine numerische ID oder eine Asana-Projekt-URL
+// in einem der beiden bekannten Formate:
+//   Neu: https://app.asana.com/1/{workspace}/project/{projectGid}/list/...
+//   Alt: https://app.asana.com/0/{projectGid}/...
+// Sucht gezielt nach "/project/{id}" bzw. "/0/{id}" statt naiv die erste
+// lange Zahlenfolge zu nehmen - sonst greift man bei der neuen URL-Form
+// versehentlich die davorstehende Workspace-ID ab.
 function extractAsanaProjectGid(input) {
   const trimmed = (input || "").trim();
   if (!trimmed) return "";
   if (/^\d+$/.test(trimmed)) return trimmed;
-  const match = trimmed.match(/\/0\/(\d+)/) || trimmed.match(/(\d{8,})/);
-  return match ? match[1] : "";
+  let match = trimmed.match(/\/project\/(\d+)/);
+  if (match) return match[1];
+  match = trimmed.match(/\/0\/(\d+)/);
+  if (match) return match[1];
+  const all = trimmed.match(/\d{8,}/g);
+  return all ? all[all.length - 1] : ""; // letzte lange Zahl als letzter Fallback
 }
 
 function addMesseConfigRow(data) {
