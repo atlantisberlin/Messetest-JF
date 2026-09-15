@@ -42,7 +42,11 @@
       body{padding:0;}
       #app{border-left:0.5px solid var(--border);border-right:0.5px solid var(--border);}
     }
-    input[type=number],input[type=text]{width:100%;padding:8px 10px;border:0.5px solid var(--border2);border-radius:var(--r);background:var(--bg);color:var(--text);font-size:14px;}
+    /* 16px ist bewusst die Untergrenze: iOS Safari zoomt beim Fokussieren
+       eines Eingabefelds automatisch rein, wenn dessen Schriftgröße unter
+       16px liegt - und springt danach nicht zuverlässig wieder zurück
+       (bekannter iOS-Bug, kein Layout-Fehler unsererseits). */
+    input[type=number],input[type=text]{width:100%;padding:8px 10px;border:0.5px solid var(--border2);border-radius:var(--r);background:var(--bg);color:var(--text);font-size:16px;}
     input:focus{outline:none;border-color:var(--info);}
     .btn{display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:var(--r);border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;cursor:pointer;white-space:nowrap;}
     .btn:active{opacity:.7;}
@@ -355,7 +359,7 @@ let artBySku    = {};
 let slavesBySku = {};
 
 let messeLabel  = "";
-const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbz97LHwokl1vpj2L4qVcOUwuVgYQmHZUNkLNJyxdpdUHR7hcHiD9tjp9hUUR5On4Q/exec";
+const WEBHOOK_URL_DEFAULT = "https://script.google.com/macros/s/AKfycby5v4wXquyaLMsm1hfiRagTLyvbsARGtj2z25VXyNKGQQhpHsXjaLdOlk3s7ry_GkTp/exec";
 // v20: stündlich per Trigger aktualisierte Katalog-Datei, liegt im selben
 // GitHub-Pages-Repo wie diese HTML-Datei - lädt komplett ohne Apps Script/
 // BigQuery, kein Kontingent-Verbrauch beim Lesen. Läuft ins Leere (Fallback
@@ -621,7 +625,7 @@ function addMesseConfigRow(data) {
       <input type="color" class="mc-fg" value="${data.fg || "#ffffff"}" title="Schriftfarbe" style="width:36px;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border2);cursor:pointer;" />
       <button class="btn-sm btn-danger btn-remove-messe-row" title="Entfernen"><i class="ti ti-trash"></i></button>
     </div>
-    <input type="text" class="mc-asana" placeholder="Asana-Projekt-URL oder -ID (Pflicht für Verkaufsabschluss)" value="${(data.asanaProjectGid||"").replace(/"/g,"&quot;")}" style="font-size:12px;" />`;
+    <input type="text" class="mc-asana" placeholder="Asana-Projekt-URL oder -ID (Pflicht für Verkaufsabschluss)" value="${(data.asanaProjectGid||"").replace(/"/g,"&quot;")}" style="font-size:16px;" />`;
   row.querySelector(".btn-remove-messe-row").addEventListener("click", () => row.remove());
   wrap.appendChild(row);
 }
@@ -3049,7 +3053,7 @@ function renderWarehouseHistoryResults(wrap) {
           <div class="chain-edit-row" data-sku="${g.sku}" data-chain="${c.chainId}" style="display:none;padding:8px 0;">
             <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
               <input class="qty-inp edit-qty" type="number" min="0" value="${c.qty}" style="width:70px;" />
-              <input class="btn edit-ref" type="text" value="${c.box}" placeholder="Box-Nr." style="width:130px;font-size:12px;padding:6px 8px;" />
+              <input class="btn edit-ref" type="text" value="${c.box}" placeholder="Box-Nr." style="width:130px;font-size:16px;padding:6px 8px;" />
               <button class="btn btn-ok btn-save-chain" data-sku="${g.sku}" data-chain="${c.chainId}"><i class="ti ti-device-floppy"></i> Speichern</button>
             </div>
           </div>`).join("")}
