@@ -68,7 +68,7 @@
     .notif-warn{background:var(--warn-bg);color:var(--warn);}
     .notif-err{background:var(--err-bg);color:var(--err);}
     #settings-panel{display:none;padding:12px 16px;border-bottom:0.5px solid var(--border);background:var(--bg2);}
-    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-messebestand,#view-sales,#view-journal,#view-fehlmengen{display:none;}
+    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-messebestand,#view-inventur,#view-sales,#view-journal,#view-fehlmengen{display:none;}
     #loading-overlay{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;}
     #loading-overlay.hidden{display:none;}
     .loading-spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--info);border-radius:50%;animation:spin .8s linear infinite;}
@@ -310,6 +310,7 @@
     <button class="tab" data-tab="preise" data-roles="supervisor,planer"><i class="ti ti-currency-euro"></i>Messepreise</button>
     <button class="tab" data-tab="warehouse" data-roles="supervisor,planer,kommission"><i class="ti ti-packages"></i>Kommission</button>
     <button class="tab" data-tab="messebestand" data-roles="supervisor,planer,kommission,verkauf"><i class="ti ti-box"></i>Messebestand</button>
+    <button class="tab" data-tab="inventur" data-roles="supervisor,planer,kommission,verkauf"><i class="ti ti-clipboard-check"></i>Inventur</button>
     <button class="tab" data-tab="fehlmengen" data-roles="supervisor,planer"><i class="ti ti-alert-triangle"></i>Fehlmengen</button>
     <button class="tab" data-tab="sales" data-roles="supervisor,planer,verkauf"><i class="ti ti-shopping-cart"></i>Verkauf</button>
     <button class="tab" data-tab="journal" data-roles="supervisor"><i class="ti ti-history"></i>Journal</button>
@@ -323,6 +324,7 @@
     <div id="view-preise"></div>
     <div id="view-warehouse"></div>
     <div id="view-messebestand"></div>
+    <div id="view-inventur"></div>
     <div id="view-fehlmengen"></div>
     <div id="view-sales"></div>
     <div id="view-journal"></div>
@@ -357,10 +359,10 @@ let currentUser = "";
 let messenConfig = [];
 
 const TAB_PERMISSIONS = {
-  supervisor: ["prep", "merkliste", "preise", "warehouse", "messebestand", "fehlmengen", "sales", "journal"],
-  planer:     ["prep", "merkliste", "preise", "warehouse", "messebestand", "fehlmengen", "sales"],
-  kommission: ["warehouse", "messebestand"],
-  verkauf:    ["sales", "messebestand"],
+  supervisor: ["prep", "merkliste", "preise", "warehouse", "messebestand", "inventur", "fehlmengen", "sales", "journal"],
+  planer:     ["prep", "merkliste", "preise", "warehouse", "messebestand", "inventur", "fehlmengen", "sales"],
+  kommission: ["warehouse", "messebestand", "inventur"],
+  verkauf:    ["sales", "messebestand", "inventur"],
 };
 
 function getDeviceId() {
@@ -417,6 +419,15 @@ let fehlmengeKategorie = "";
 let fehlmengeLieferant = "";
 let fehlmengeLager = { zl: true, co: true, st: true, fb: true, hh: true };
 let bestellt = {};
+// { [sku]: { total, byPlace: {lagerplatz: menge}, events: [...] } } - vom
+// Server geladen (siehe loadState() im Backend), gleiches Merge-Prinzip
+// wie preise/bestellt (touchSku schützt frische lokale Änderungen vor
+// einem noch nicht aktualisierten Server-Stand).
+let inventur = {};
+let inventurDetailSku = null;
+let inventurSearch    = "";
+let inventurLieferant = "";
+let inventurKategorie = "";
 let parkedCartFilter = "";
 
 const PICKORTE = [
@@ -533,7 +544,7 @@ async function selectMesse(name) {
   applyMesseTheme(name);
   saveUIState();
   planned = {}; committed = {}; commitLog = {}; commitDone = {}; preise = {}; preisCodeCache = {};
-  carts = {}; activeCartUuid = null; bestellt = {};
+  carts = {}; activeCartUuid = null; bestellt = {}; inventur = {};
   showNotification(`Messe "${name}" ausgewählt`, "ok");
   await loadRemoteState(false);
   startAutoRefresh();
@@ -920,6 +931,18 @@ async function loadRemoteState(silent = false) {
       }
     });
     bestellt = mergedBestellt;
+
+    const serverInventur = s.inventur || {};
+    const mergedInventur = {};
+    const allInventurSkus = new Set([...Object.keys(serverInventur), ...Object.keys(inventur)]);
+    allInventurSkus.forEach(sku => {
+      if (isProtected(sku) || serverInventur[sku] === undefined) {
+        if (inventur[sku] !== undefined) mergedInventur[sku] = inventur[sku];
+      } else {
+        mergedInventur[sku] = serverInventur[sku];
+      }
+    });
+    inventur = mergedInventur;
 
     if (!silent) showNotification("Stand aktualisiert");
     renderView();
@@ -1407,7 +1430,7 @@ function parseCSV(text) {
 }
 
 function renderView() {
-  ["prep","merkliste","preise","warehouse","messebestand","fehlmengen","sales","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
+  ["prep","merkliste","preise","warehouse","messebestand","inventur","fehlmengen","sales","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
   qs(`#view-${currentView}`).style.display = "block";
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === currentView));
   if (currentView === "prep")         renderPrep();
@@ -1415,6 +1438,7 @@ function renderView() {
   if (currentView === "preise")       renderPreise();
   if (currentView === "warehouse")    renderWarehouse();
   if (currentView === "messebestand") renderMessebestand();
+  if (currentView === "inventur")     renderInventurliste();
   if (currentView === "fehlmengen")   renderFehlmengen();
   if (currentView === "sales")        renderSales();
   if (currentView === "journal")      renderJournal();
@@ -3121,6 +3145,273 @@ function runMessebestandSearch() {
   });
 }
 
+// ── INVENTURLISTE (alle Rollen) ────────────────────────────────────────────
+// System-Soll (kommissionierte Gesamtmenge) gilt nur, bis ein Artikel zum
+// ersten Mal gezählt wurde - danach ersetzt die Summe aller erfassten
+// Lagerplätze diesen Wert dauerhaft (kein Delta-Vergleich mehr, siehe
+// Chat-Absprache: "Soll wird durch die aktuelle Inventursumme ersetzt").
+function renderInventurliste() {
+  const wrap = qs("#view-inventur");
+
+  if (inventurDetailSku) {
+    renderInventurDetail(wrap);
+    return;
+  }
+
+  const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
+
+  if (geplant.length === 0) {
+    wrap.innerHTML = `<div class="muted" style="text-align:center;padding:32px 0;">
+      <i class="ti ti-clipboard-check" style="font-size:36px;display:block;margin-bottom:10px;opacity:.4;"></i>
+      Noch keine Artikel geplant.<br>
+      <span style="font-size:12px;">Artikel in der Vorbereitung suchen und Menge setzen.</span>
+    </div>`;
+    return;
+  }
+
+  ensureDetailsLoaded(geplant.map(a => a.sku), () => renderInventurliste());
+
+  const allLieferanten = [...new Set(articles.map(a => a.supplier).filter(Boolean))].sort();
+  const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
+
+  wrap.innerHTML = `
+    <p class="muted" style="margin-bottom:12px;">Inventur je Artikel und Lagerplatz. Zeigt zunächst das System-Soll (kommissionierte Menge) - sobald ein Artikel gezählt wurde, zählt stattdessen die aktuelle Summe aller erfassten Lagerplätze.</p>
+    <div class="filter-bar">
+      <div class="search-bar" style="margin-bottom:8px;">
+        <i class="ti ti-search"></i>
+        <input type="text" id="inventur-search" placeholder="Name, SKU oder EAN …" value="${inventurSearch}" />
+      </div>
+      <div class="ac-wrap">
+        <input type="text" id="inventur-lieferant" placeholder="Lieferant / Hersteller …" value="${inventurLieferant}" />
+        <div class="ac-dropdown" id="ac-inventur-lieferant" style="display:none;"></div>
+      </div>
+      <div class="ac-wrap">
+        <input type="text" id="inventur-kategorie" placeholder="Kategorie …" value="${inventurKategorie}" />
+        <div class="ac-dropdown" id="ac-inventur-kategorie" style="display:none;"></div>
+      </div>
+    </div>
+    <div id="inventur-results"></div>
+  `;
+
+  makeAutocomplete(qs("#inventur-lieferant"), qs("#ac-inventur-lieferant"), () => allLieferanten, val => {
+    inventurLieferant = val; runInventurSearch();
+  });
+  makeAutocomplete(qs("#inventur-kategorie"), qs("#ac-inventur-kategorie"), () => allKategorien, val => {
+    inventurKategorie = val; runInventurSearch();
+  });
+  qs("#inventur-search").addEventListener("input", e => { inventurSearch = e.target.value; runInventurSearch(); });
+  qs("#inventur-lieferant").addEventListener("input", e => { inventurLieferant = e.target.value; runInventurSearch(); });
+  qs("#inventur-kategorie").addEventListener("input", e => { inventurKategorie = e.target.value; runInventurSearch(); });
+
+  runInventurSearch();
+}
+
+function runInventurSearch() {
+  const resultsEl = qs("#inventur-results");
+  if (!resultsEl) return;
+
+  const geplant = articles.filter(a => (planned[a.sku] || 0) > 0 && !isMaster(a));
+
+  const sq = inventurSearch.trim().toLowerCase();
+  const sl = inventurLieferant.trim().toLowerCase();
+  const sk = inventurKategorie.trim().toLowerCase();
+
+  const filtered = geplant.filter(a => {
+    if (sl && !(a.supplier||"").toLowerCase().includes(sl)) return false;
+    if (sk && !(a.category||"").toLowerCase().includes(sk)) return false;
+    if (sq) {
+      const tokens = sq.split(/\s+/).filter(Boolean);
+      const haystack = (a.name + " " + a.sku + " " + (a.ean||"")).toLowerCase();
+      if (!tokens.every(t => haystack.includes(t))) return false;
+    }
+    return true;
+  });
+
+  resultsEl.innerHTML = "";
+
+  if (filtered.length === 0) {
+    resultsEl.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;">Keine Artikel gefunden.</div>`;
+    return;
+  }
+
+  const info = document.createElement("div");
+  info.className = "muted";
+  info.style.cssText = "font-size:12px;margin-bottom:10px;";
+  info.textContent = `${filtered.length} Artikel`;
+  resultsEl.appendChild(info);
+
+  filtered.sort((a, b) => a.name.localeCompare(b.name, "de"))
+    .forEach(art => resultsEl.appendChild(_buildInventurCard(art)));
+}
+
+function _buildInventurCard(art) {
+  const sku = art.sku;
+  const inv = inventur[sku];
+  const hasInventur = !!(inv && inv.events && inv.events.length > 0);
+  const referenceQty   = hasInventur ? inv.total : (committed[sku] || 0);
+  const referenceLabel = hasInventur ? "Aktuelle Menge" : "System-Soll";
+
+  const lastEvent = hasInventur ? inv.events[inv.events.length - 1] : null;
+  const lastD     = lastEvent ? parseServerTimestamp(lastEvent.ts) : null;
+  const lastLabel = lastD ? lastD.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+
+  const card = document.createElement("div");
+  card.className = "card";
+
+  card.innerHTML = `
+    <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;">
+      ${imgTag(art, 48)}
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:500;line-height:1.3;">${art.name}</div>
+        <div class="muted" style="margin-top:2px;">${skuEanHTML(art.sku, art.ean)}</div>
+      </div>
+    </div>
+    <div class="chip-row" style="margin-bottom:12px;">
+      <span class="badge ${hasInventur ? "ok" : "info"}">${referenceLabel}: ${referenceQty}</span>
+      ${lastLabel ? `<span class="muted" style="font-size:11px;">zuletzt gezählt ${lastLabel}</span>` : ""}
+    </div>
+    <button class="btn btn-info btn-open-inventur" style="width:100%;justify-content:center;">
+      <i class="ti ti-clipboard-check"></i> Inventur
+    </button>
+  `;
+
+  card.querySelector(".btn-open-inventur").addEventListener("click", () => {
+    inventurDetailSku = sku;
+    renderInventurliste();
+  });
+
+  return card;
+}
+
+function renderInventurDetail(wrap) {
+  const art = articles.find(a => a.sku === inventurDetailSku);
+  if (!art) { inventurDetailSku = null; renderInventurliste(); return; }
+
+  wrap.innerHTML = "";
+
+  const backBtn = document.createElement("button");
+  backBtn.className = "btn btn-sm";
+  backBtn.style.marginBottom = "12px";
+  backBtn.innerHTML = `<i class="ti ti-arrow-left"></i> Zurück`;
+  backBtn.onclick = () => { inventurDetailSku = null; renderInventurliste(); };
+  wrap.appendChild(backBtn);
+
+  const sku = art.sku;
+  const inv = inventur[sku] || { total: 0, byPlace: {}, events: [] };
+  const hasInventur    = inv.events.length > 0;
+  const referenceQty   = hasInventur ? inv.total : (committed[sku] || 0);
+  const referenceLabel = hasInventur ? "Aktuelle Menge" : "System-Soll";
+
+  const headerCard = document.createElement("div");
+  headerCard.style.cssText = "background:var(--info-bg);border:1.5px solid var(--info);border-radius:var(--rl);padding:12px;margin-bottom:18px;";
+  headerCard.innerHTML = `
+    <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:10px;">
+      ${imgTag(art, 56)}
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:14px;line-height:1.3;margin-bottom:3px;">${art.name}</div>
+        <div class="muted">${skuEanHTML(art.sku, art.ean)}</div>
+      </div>
+    </div>
+    <div style="background:var(--bg);border-radius:var(--r);padding:8px 10px;text-align:center;">
+      <div class="muted" style="font-size:11px;">${referenceLabel}</div>
+      <div style="font-size:20px;font-weight:600;">${referenceQty}</div>
+    </div>
+  `;
+  wrap.appendChild(headerCard);
+
+  const formTitle = document.createElement("div");
+  formTitle.className = "merkliste-title";
+  formTitle.style.marginBottom = "8px";
+  formTitle.textContent = "Neue Zählung erfassen";
+  wrap.appendChild(formTitle);
+
+  // Bekannte Lagerplätze aus bereits vorhandenen Zählungen sammeln (kein
+  // eigenes Verwaltungs-/Settings-Feld nötig) - Autocomplete-Vorschlag,
+  // Freitext bleibt trotzdem möglich, um neue Plätze anzulegen.
+  const knownPlaces = [...new Set(
+    Object.values(inventur).flatMap(d => Object.keys(d.byPlace || {}))
+  )].sort();
+
+  const formWrap = document.createElement("div");
+  formWrap.style.cssText = "background:var(--bg2);border-radius:var(--r);padding:10px;margin-bottom:18px;";
+  formWrap.innerHTML = `
+    <div class="ac-wrap" style="margin-bottom:8px;">
+      <input type="text" id="inv-lagerplatz" placeholder="z.B. Messestand A, oder neu eingeben" autocomplete="off" />
+      <div class="ac-dropdown" id="ac-inv-lagerplatz" style="display:none;"></div>
+    </div>
+    <input type="number" id="inv-menge" min="0" step="1" placeholder="Menge" style="margin-bottom:8px;" />
+    <button class="btn btn-ok btn-save-inventur" style="width:100%;justify-content:center;">
+      <i class="ti ti-device-floppy"></i> Zählung speichern
+    </button>
+  `;
+  wrap.appendChild(formWrap);
+
+  makeAutocomplete(qs("#inv-lagerplatz"), qs("#ac-inv-lagerplatz"), () => knownPlaces, val => {
+    qs("#inv-lagerplatz").value = val;
+  });
+
+  formWrap.querySelector(".btn-save-inventur").addEventListener("click", async () => {
+    const lagerplatz = qs("#inv-lagerplatz").value.trim();
+    const mengeRaw    = parseInt(qs("#inv-menge").value, 10);
+    if (!lagerplatz) { showNotification("Bitte einen Lagerplatz angeben.", "warn"); return; }
+    if (isNaN(mengeRaw) || mengeRaw < 0) { showNotification("Bitte eine gültige Menge angeben.", "warn"); return; }
+
+    // Optimistisch lokal aktualisieren, gleiches Prinzip wie überall sonst
+    // im Tool - Nutzer sieht sofort das Ergebnis, ohne auf den nächsten
+    // Server-Refresh zu warten.
+    if (!inventur[sku]) inventur[sku] = { total: 0, byPlace: {}, events: [] };
+    const data = inventur[sku];
+    const oldMenge = data.byPlace[lagerplatz] !== undefined ? data.byPlace[lagerplatz] : 0;
+    data.byPlace[lagerplatz] = mengeRaw;
+    data.total = Object.values(data.byPlace).reduce((s, m) => s + m, 0);
+    data.events.push({ lagerplatz, oldMenge, newMenge: mengeRaw, ts: new Date().toISOString(), user: currentUser });
+
+    touchSku(sku);
+    await sendWebhook("INVENTUR_SET", { sku, art, ref: lagerplatz, menge: mengeRaw });
+    showNotification(`Zählung gespeichert: ${lagerplatz} = ${mengeRaw}`, "ok");
+    renderInventurDetail(wrap);
+  });
+
+  if (Object.keys(inv.byPlace).length > 0) {
+    const distTitle = document.createElement("div");
+    distTitle.className = "merkliste-title";
+    distTitle.style.marginBottom = "8px";
+    distTitle.textContent = "Aktuelle Verteilung";
+    wrap.appendChild(distTitle);
+
+    const distWrap = document.createElement("div");
+    distWrap.style.cssText = "display:flex;flex-direction:column;gap:6px;margin-bottom:18px;";
+    Object.keys(inv.byPlace).sort().forEach(place => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;justify-content:space-between;background:var(--bg2);border-radius:var(--r);padding:8px 12px;";
+      row.innerHTML = `<span style="font-size:13px;">${place}</span><span style="font-size:13px;font-weight:500;">${inv.byPlace[place]}x</span>`;
+      distWrap.appendChild(row);
+    });
+    wrap.appendChild(distWrap);
+  }
+
+  const histTitle = document.createElement("div");
+  histTitle.className = "merkliste-title";
+  histTitle.style.marginBottom = "8px";
+  histTitle.textContent = "Historie";
+  wrap.appendChild(histTitle);
+
+  if (inv.events.length === 0) {
+    wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="font-size:12px;padding:8px 0;">Noch keine Zählung erfasst.</div>`);
+  } else {
+    const histWrap = document.createElement("div");
+    [...inv.events].reverse().forEach(e => {
+      const d = parseServerTimestamp(e.ts);
+      const dLabel = d ? d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "Datum unbekannt";
+      const row = document.createElement("div");
+      row.style.cssText = "font-size:12px;color:var(--text2);padding:4px 0;display:flex;align-items:center;gap:6px;";
+      row.innerHTML = `<i class="ti ti-check" style="font-size:11px;color:var(--ok);"></i> ${dLabel} · ${e.user || "?"} hat Menge ${e.lagerplatz} geändert: Alt: ${e.oldMenge} Aktuell: ${e.newMenge}`;
+      histWrap.appendChild(row);
+    });
+    wrap.appendChild(histWrap);
+  }
+}
+
 const FEHLMENGE_LAGER = [
   { key: "zl", label: "ZL" },
   { key: "co", label: "CO" },
@@ -4098,9 +4389,12 @@ function sendWebhook(action, data) {
     case "BESTELLT_SET":
       payload.value = !!data.value;
       break;
+    case "INVENTUR_SET":
+      payload.menge = data.menge || 0;
+      break;
   }
 
-  if (action === "COMMIT" || action === "COMMIT_UNDO") touchSku(sku);
+  if (action === "COMMIT" || action === "COMMIT_UNDO" || action === "INVENTUR_SET") touchSku(sku);
 
   const debounceKey =
     (action === "PLAN_SET" || action === "REMOVE") ? "plan:" + sku :
@@ -4259,6 +4553,7 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
   currentView = t.dataset.tab;
   prepDetailSku       = null;
   merklisteDetailSku  = null;
+  inventurDetailSku   = null;
   t.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
   // v18-Update: laufender Refresh nur in Kommission (siehe
   // startAutoRefresh) - beim Wechsel in einen anderen Tab stattdessen
