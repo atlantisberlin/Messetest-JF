@@ -46,7 +46,7 @@
        eines Eingabefelds automatisch rein, wenn dessen Schriftgröße unter
        16px liegt - und springt danach nicht zuverlässig wieder zurück
        (bekannter iOS-Bug, kein Layout-Fehler unsererseits). */
-    input[type=number],input[type=text]{width:100%;padding:8px 10px;border:0.5px solid var(--border2);border-radius:var(--r);background:var(--bg);color:var(--text);font-size:16px;}
+    input[type=number],input[type=text],input[type=email],input[type=tel]{width:100%;padding:8px 10px;border:0.5px solid var(--border2);border-radius:var(--r);background:var(--bg);color:var(--text);font-size:16px;}
     input:focus{outline:none;border-color:var(--info);}
     .btn{display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:var(--r);border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;cursor:pointer;white-space:nowrap;}
     .btn:active{opacity:.7;}
