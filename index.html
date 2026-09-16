@@ -46,7 +46,7 @@
        eines Eingabefelds automatisch rein, wenn dessen Schriftgröße unter
        16px liegt - und springt danach nicht zuverlässig wieder zurück
        (bekannter iOS-Bug, kein Layout-Fehler unsererseits). */
-    input[type=number],input[type=text],input[type=email],input[type=tel]{width:100%;padding:8px 10px;border:0.5px solid var(--border2);border-radius:var(--r);background:var(--bg);color:var(--text);font-size:16px;}
+    input[type=number],input[type=text],input[type=email],input[type=tel],select{width:100%;padding:8px 10px;border:0.5px solid var(--border2);border-radius:var(--r);background:var(--bg);color:var(--text);font-size:16px;}
     input:focus{outline:none;border-color:var(--info);}
     .btn{display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:var(--r);border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;cursor:pointer;white-space:nowrap;}
     .btn:active{opacity:.7;}
@@ -198,7 +198,10 @@
     <div style="background:var(--bg);border-radius:12px;padding:20px;width:100%;max-width:340px;">
       <div style="font-weight:600;font-size:16px;margin-bottom:4px;">Wer bist du?</div>
       <div class="muted" style="font-size:13px;margin-bottom:14px;">Der Name wird bei jeder Buchung (Planung, Kommissionierung, Verkauf) eingetragen.</div>
-      <input type="text" id="inp-user-name" placeholder="Vor- und Nachname" style="margin-bottom:12px;" autocomplete="off" />
+      <div id="user-dialog-field-wrap" style="margin-bottom:12px;">
+        <input type="text" id="inp-user-name" placeholder="Vor- und Nachname" autocomplete="off" />
+      </div>
+      <div id="user-dialog-hint" class="muted" style="font-size:11px;margin:-8px 0 12px;display:none;"></div>
       <div style="display:flex;gap:8px;">
         <button id="btn-cancel-user" class="btn" style="flex:1;display:none;">Abbrechen</button>
         <button id="btn-save-user" class="btn btn-info" style="flex:1;">
@@ -329,6 +332,19 @@
         <i class="ti ti-device-floppy"></i> Lagerplätze speichern
       </button>
       <div id="lagerplaetze-status" style="margin-top:6px;font-size:12px;"></div>
+    </div>
+
+    <div id="settings-benutzer" style="display:none;margin-top:14px;padding-top:14px;border-top:0.5px solid var(--border);">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Benutzer verwalten</div>
+      <div class="muted" style="font-size:11px;margin-bottom:10px;">Feste Namensliste für die Anmeldung - verhindert Tippfehler-Varianten (z.B. "Jan Fritsche" vs. "Jan") in Auswertung und Journal. Nur Supervisor kann Namen anlegen/entfernen.</div>
+      <div id="benutzer-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
+      <button id="btn-add-benutzer-row" class="btn" style="width:100%;margin-bottom:10px;">
+        <i class="ti ti-plus"></i> Weiterer Benutzer
+      </button>
+      <button id="btn-save-benutzer" class="btn btn-info" style="width:100%;">
+        <i class="ti ti-device-floppy"></i> Benutzer speichern
+      </button>
+      <div id="benutzer-status" style="margin-top:6px;font-size:12px;"></div>
     </div>
 
   </div>
@@ -525,6 +541,8 @@ let inventurNurMessestand = false;
 // Inventur-Tab oder die Einstellungen tatsächlich geöffnet werden).
 let inventurLagerplaetze = [];
 let inventurLagerplaetzeLoaded = false;
+let benutzerListe = [];
+let benutzerListeLoaded = false;
 let parkedCartFilter = "";
 
 const PICKORTE = [
@@ -815,6 +833,66 @@ async function saveLagerplaetzeToServer() {
     if (json.ok) {
       inventurLagerplaetze = json.lagerplaetze || names;
       inventurLagerplaetzeLoaded = true;
+      statusEl.style.color = "var(--ok)";
+      statusEl.textContent = "Gespeichert.";
+    } else {
+      statusEl.style.color = "var(--err)";
+      statusEl.textContent = json.error || "Fehler beim Speichern.";
+    }
+  } catch(e) {
+    statusEl.style.color = "var(--err)";
+    statusEl.textContent = "Verbindungsfehler: " + e.message;
+  }
+}
+
+// ── BENUTZER-LISTE (Einstellungen, nur Supervisor speichert) - NEU v32 ────
+async function loadBenutzerListeList(onDone) {
+  if (!WEBHOOK_URL) return;
+  try {
+    const resp = await fetchWithTimeout(authUrl(WEBHOOK_URL + "?action=benutzer_liste_get"));
+    const json = await resp.json();
+    if (json.ok) benutzerListe = json.benutzer || [];
+  } catch(e) { console.warn("loadBenutzerListeList:", e); }
+  benutzerListeLoaded = true;
+  if (onDone) onDone();
+}
+
+function renderBenutzerRows(list) {
+  const wrap = qs("#benutzer-list");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const rows = (list && list.length) ? list : [""];
+  rows.forEach(name => addBenutzerRow(name));
+}
+
+function addBenutzerRow(name) {
+  const wrap = qs("#benutzer-list");
+  const row = document.createElement("div");
+  row.className = "benutzer-row";
+  row.style.cssText = "display:flex;gap:6px;align-items:center;";
+  row.innerHTML = `
+    <input type="text" class="bn-name" placeholder="z.B. Jan Fritsche" value="${(name||"").replace(/"/g,"&quot;")}" style="flex:1;" />
+    <button class="btn-sm btn-danger btn-remove-benutzer-row" title="Entfernen"><i class="ti ti-trash"></i></button>`;
+  row.querySelector(".btn-remove-benutzer-row").addEventListener("click", () => row.remove());
+  wrap.appendChild(row);
+}
+
+async function saveBenutzerListeToServer() {
+  const names = [...document.querySelectorAll(".benutzer-row")]
+    .map(row => row.querySelector(".bn-name").value.trim())
+    .filter(Boolean);
+
+  const statusEl = qs("#benutzer-status");
+  statusEl.style.color = "var(--text2)";
+  statusEl.textContent = "Speichere…";
+  try {
+    const url = WEBHOOK_URL + "?action=benutzer_liste_save&token=" + encodeURIComponent(getAuthToken()) +
+      "&list=" + encodeURIComponent(JSON.stringify(names));
+    const resp = await fetchWithTimeout(url);
+    const json = await resp.json();
+    if (json.ok) {
+      benutzerListe = json.benutzer || names;
+      benutzerListeLoaded = true;
       statusEl.style.color = "var(--ok)";
       statusEl.textContent = "Gespeichert.";
     } else {
@@ -1392,11 +1470,32 @@ function ensureUser() {
   showUserDialog();
 }
 
-function showUserDialog() {
+async function showUserDialog() {
   const hasValidName = !!(currentUser && currentUser !== "Unbekannt");
-  qs("#inp-user-name").value = hasValidName ? currentUser : "";
   qs("#btn-cancel-user").style.display = hasValidName ? "" : "none";
   qs("#user-dialog").style.display = "flex";
+
+  // v32: feste Namensliste statt Freitext - verhindert Tippfehler-
+  // Varianten ("Jan Fritsche" vs. "Jan") in Auswertung/Journal. Fällt auf
+  // das alte Freitextfeld zurück, solange der Supervisor noch keine
+  // Liste angelegt hat, damit niemand blockiert ist.
+  if (!benutzerListeLoaded) await loadBenutzerListeList();
+
+  const fieldWrap = qs("#user-dialog-field-wrap");
+  const hint = qs("#user-dialog-hint");
+  if (benutzerListe.length > 0) {
+    fieldWrap.innerHTML = `<select id="inp-user-name">
+      <option value="">Bitte wählen…</option>
+      ${benutzerListe.map(n => `<option value="${n.replace(/"/g,"&quot;")}" ${n === currentUser ? "selected" : ""}>${n}</option>`).join("")}
+    </select>`;
+    hint.style.display = "none";
+  } else {
+    fieldWrap.innerHTML = `<input type="text" id="inp-user-name" placeholder="Vor- und Nachname" autocomplete="off" value="${hasValidName ? currentUser.replace(/"/g,"&quot;") : ""}" />`;
+    hint.textContent = getAuthRole() === "supervisor"
+      ? "Noch keine Namensliste eingerichtet - unter Einstellungen → Benutzer verwalten anlegen."
+      : "Noch keine Namensliste eingerichtet - bitte den Supervisor bitten, Namen anzulegen.";
+    hint.style.display = "block";
+  }
   qs("#inp-user-name").focus();
 }
 
@@ -5601,15 +5700,19 @@ qs("#btn-settings").addEventListener("click", async () => {
       qs("#settings-pins").style.display = "block";
       qs("#settings-messen").style.display = "block";
       qs("#settings-lagerplaetze").style.display = "block";
+      qs("#settings-benutzer").style.display = "block";
       loadPinStatus();
       const merged = await fetchMergedMessenList();
       renderMessenConfigRows(merged);
       await loadInventurLagerplaetzeList();
       renderLagerplaetzeRows(inventurLagerplaetze);
+      await loadBenutzerListeList();
+      renderBenutzerRows(benutzerListe);
     } else {
       qs("#settings-pins").style.display = "none";
       qs("#settings-messen").style.display = "none";
       qs("#settings-lagerplaetze").style.display = "none";
+      qs("#settings-benutzer").style.display = "none";
     }
   }
 });
@@ -5617,6 +5720,8 @@ qs("#btn-settings").addEventListener("click", async () => {
 qs("#btn-add-messe-row").addEventListener("click", () => addMesseConfigRow({ name: "", bg: "#185fa5", fg: "#ffffff", asanaProjectGid: "" }));
 qs("#btn-add-lagerplatz-row").addEventListener("click", () => addLagerplatzRow(""));
 qs("#btn-save-lagerplaetze").addEventListener("click", saveLagerplaetzeToServer);
+qs("#btn-add-benutzer-row").addEventListener("click", () => addBenutzerRow(""));
+qs("#btn-save-benutzer").addEventListener("click", saveBenutzerListeToServer);
 qs("#btn-save-messen-config").addEventListener("click", saveMessenConfigToServer);
 
 qs("#btn-save-settings").addEventListener("click", () => {
