@@ -73,7 +73,7 @@
     .notif-warn{background:var(--warn-bg);color:var(--warn);}
     .notif-err{background:var(--err-bg);color:var(--err);}
     #settings-panel{display:none;padding:12px 16px;border-bottom:0.5px solid var(--border);background:var(--bg2);}
-    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-messebestand,#view-inventur,#view-sales,#view-journal,#view-fehlmengen{display:none;}
+    #view-prep,#view-merkliste,#view-preise,#view-warehouse,#view-messebestand,#view-inventur,#view-sales,#view-auswertung,#view-journal,#view-fehlmengen{display:none;}
     #loading-overlay{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;}
     #loading-overlay.hidden{display:none;}
     .loading-spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--info);border-radius:50%;animation:spin .8s linear infinite;}
@@ -343,6 +343,7 @@
       <button class="tab" data-tab="inventur" data-roles="supervisor,planer,kommission,verkauf"><i class="ti ti-clipboard-check"></i>Inventur</button>
       <button class="tab" data-tab="fehlmengen" data-roles="supervisor,planer"><i class="ti ti-alert-triangle"></i>Fehlmengen</button>
       <button class="tab" data-tab="sales" data-roles="supervisor,planer,verkauf"><i class="ti ti-shopping-cart"></i>Verkauf</button>
+      <button class="tab" data-tab="auswertung" data-roles="supervisor"><i class="ti ti-chart-bar"></i>Auswertung</button>
       <button class="tab" data-tab="journal" data-roles="supervisor"><i class="ti ti-history"></i>Journal</button>
     </div>
   </div>
@@ -358,6 +359,7 @@
     <div id="view-inventur"></div>
     <div id="view-fehlmengen"></div>
     <div id="view-sales"></div>
+    <div id="view-auswertung"></div>
     <div id="view-journal"></div>
   </div>
 </div>
@@ -433,7 +435,7 @@ let currentUser = "";
 let messenConfig = [];
 
 const TAB_PERMISSIONS = {
-  supervisor: ["prep", "merkliste", "preise", "warehouse", "messebestand", "inventur", "fehlmengen", "sales", "journal"],
+  supervisor: ["prep", "merkliste", "preise", "warehouse", "messebestand", "inventur", "fehlmengen", "sales", "auswertung", "journal"],
   planer:     ["prep", "merkliste", "preise", "warehouse", "messebestand", "inventur", "fehlmengen", "sales"],
   kommission: ["warehouse", "messebestand", "inventur"],
   verkauf:    ["sales", "messebestand", "inventur"],
@@ -1809,7 +1811,7 @@ function parseCSV(text) {
 }
 
 function renderView() {
-  ["prep","merkliste","preise","warehouse","messebestand","inventur","fehlmengen","sales","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
+  ["prep","merkliste","preise","warehouse","messebestand","inventur","fehlmengen","sales","auswertung","journal"].forEach(v => qs(`#view-${v}`).style.display = "none");
   qs(`#view-${currentView}`).style.display = "block";
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === currentView));
   if (currentView === "prep")         renderPrep();
@@ -1820,6 +1822,7 @@ function renderView() {
   if (currentView === "inventur")     renderInventurliste();
   if (currentView === "fehlmengen")   renderFehlmengen();
   if (currentView === "sales")        renderSales();
+  if (currentView === "auswertung")   renderAuswertung();
   if (currentView === "journal")      renderJournal();
 }
 
@@ -4072,7 +4075,7 @@ function ensureActiveCart() {
 
 function createNewCart() {
   const uuid = genUUID();
-  carts[uuid] = { status: "OFFEN", kunde: { name: "", strasse: "", plzOrt: "", email: "", telefon: "", notiz: "" }, items: [] };
+  carts[uuid] = { status: "OFFEN", kunde: { name: "", email: "", telefon: "", lieferName: "", lieferFirma: "", strasse: "", plzOrt: "", notiz: "" }, items: [] };
   activeCartUuid = uuid;
   saveUIState();
   touchSku(uuid);
@@ -4134,8 +4137,9 @@ function parkCart(uuid) {
   touchSku(uuid);
   sendWebhook("CART_HEADER_SET", {
     cartUuid: uuid, status: "GEPARKT",
-    kundeName: cart.kunde.name, kundeStrasse: cart.kunde.strasse,
-    kundePlzOrt: cart.kunde.plzOrt, kundeEmail: cart.kunde.email, kundeTelefon: cart.kunde.telefon, kundeNotiz: cart.kunde.notiz,
+    kundeName: cart.kunde.name, kundeEmail: cart.kunde.email, kundeTelefon: cart.kunde.telefon,
+    kundeLieferName: cart.kunde.lieferName, kundeLieferFirma: cart.kunde.lieferFirma,
+    kundeStrasse: cart.kunde.strasse, kundePlzOrt: cart.kunde.plzOrt, kundeNotiz: cart.kunde.notiz,
   });
 }
 
@@ -4360,8 +4364,9 @@ function discardActiveCart(uuid) {
   touchSku(uuid);
   sendWebhook("CART_HEADER_SET", {
     cartUuid: uuid, status: "GELOESCHT",
-    kundeName: cart.kunde.name, kundeStrasse: cart.kunde.strasse,
-    kundePlzOrt: cart.kunde.plzOrt, kundeEmail: cart.kunde.email, kundeTelefon: cart.kunde.telefon, kundeNotiz: cart.kunde.notiz,
+    kundeName: cart.kunde.name, kundeEmail: cart.kunde.email, kundeTelefon: cart.kunde.telefon,
+    kundeLieferName: cart.kunde.lieferName, kundeLieferFirma: cart.kunde.lieferFirma,
+    kundeStrasse: cart.kunde.strasse, kundePlzOrt: cart.kunde.plzOrt, kundeNotiz: cart.kunde.notiz,
   });
   delete carts[uuid];
   activeCartUuid = null;
@@ -4402,6 +4407,159 @@ function describeJournalEntry(e) {
       return `${user} hat „${name}" aus einer Verkaufsliste entfernt`;
     default:
       return `${user}: ${e.aktion} (${name})`;
+  }
+}
+
+// ── AUSWERTUNG (nur Supervisor, NEU v27) ───────────────────────────────────
+// Backend liefert eine Zeile pro (abgeschlossener Warenkorb × Artikel) -
+// die eigentliche Aggregation (Tag/Zahlungsart/Mitnahme-Versand/
+// Verkäufer) passiert hier client-seitig, da die Datenmenge einer Messe
+// dafür klein genug ist und das flexibler ist als mehrdimensionales
+// SQL-GROUP-BY. Nur die AKTUELL ausgewählte Messe, kein Vergleich über
+// mehrere Messen hinweg.
+async function renderAuswertung() {
+  const wrap = qs("#view-auswertung");
+  wrap.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;">Lade Auswertung…</div>`;
+
+  if (!messeLabel) {
+    wrap.innerHTML = `<div class="muted" style="text-align:center;padding:24px 0;">Bitte zuerst eine Messe auswählen.</div>`;
+    return;
+  }
+
+  try {
+    const resp = await fetchWithTimeout(authUrl(WEBHOOK_URL + "?action=auswertung_get&messe=" + encodeURIComponent(messeLabel)));
+    const json = await resp.json();
+    if (!json.ok) {
+      wrap.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;color:var(--err);">Fehler: ${json.error || "unbekannt"}</div>`;
+      return;
+    }
+    const rows = json.rows || [];
+    wrap.innerHTML = "";
+
+    const hdr = document.createElement("div");
+    hdr.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;";
+    hdr.innerHTML = `<span style="font-weight:600;font-size:14px;">Auswertung</span>
+      <button class="btn-sm" id="btn-auswertung-refresh"><i class="ti ti-refresh"></i> Aktualisieren</button>`;
+    wrap.appendChild(hdr);
+    hdr.querySelector("#btn-auswertung-refresh").addEventListener("click", renderAuswertung);
+
+    wrap.insertAdjacentHTML("beforeend", `<p class="muted" style="margin-bottom:14px;">Ausschließlich abgeschlossene Verkäufe von "${messeLabel}".</p>`);
+
+    if (rows.length === 0) {
+      wrap.insertAdjacentHTML("beforeend", `<div class="muted" style="text-align:center;padding:24px 0;">
+        <i class="ti ti-chart-bar" style="font-size:32px;display:block;margin-bottom:8px;opacity:.5;"></i>
+        Noch keine abgeschlossenen Verkäufe für diese Messe.
+      </div>`);
+      return;
+    }
+
+    const perSale       = {}; // uuid -> { total }
+    const byDay          = {}; // tagKey -> { label, revenue }
+    const byZahlungsart  = {}; // zahlungsart -> revenue
+    const byLieferart    = {}; // Mitnahme/Versand -> revenue
+    const byVerkaeufer   = {}; // verkaeufer -> { revenue, sales:Set }
+
+    rows.forEach(r => {
+      const lineTotal = (r.menge || 0) * (r.preis || 0);
+      const d = parseServerTimestamp(r.zeitstempel);
+      const tagKey   = d ? d.toISOString().slice(0, 10) : "unbekannt";
+      const tagLabel = d ? d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }) : "Unbekannt";
+
+      if (!perSale[r.uuid]) perSale[r.uuid] = { total: 0 };
+      perSale[r.uuid].total += lineTotal;
+
+      if (!byDay[tagKey]) byDay[tagKey] = { label: tagLabel, revenue: 0 };
+      byDay[tagKey].revenue += lineTotal;
+
+      byZahlungsart[r.zahlungsart] = (byZahlungsart[r.zahlungsart] || 0) + lineTotal;
+
+      const lieferLabel = r.lieferart === "versand" ? "Versand" : "Mitnahme";
+      byLieferart[lieferLabel] = (byLieferart[lieferLabel] || 0) + lineTotal;
+
+      if (!byVerkaeufer[r.verkaeufer]) byVerkaeufer[r.verkaeufer] = { revenue: 0, sales: new Set() };
+      byVerkaeufer[r.verkaeufer].revenue += lineTotal;
+      byVerkaeufer[r.verkaeufer].sales.add(r.uuid);
+    });
+
+    const totalRevenue = Object.values(perSale).reduce((s, x) => s + x.total, 0);
+    const totalSales   = Object.keys(perSale).length;
+    const avgSale       = totalSales > 0 ? totalRevenue / totalSales : 0;
+
+    const cardsWrap = document.createElement("div");
+    cardsWrap.style.cssText = "display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:18px;";
+    cardsWrap.innerHTML = [
+      { label: "Umsatz",   value: fmtEur(totalRevenue) },
+      { label: "Verkäufe", value: String(totalSales) },
+      { label: "Ø Bon",    value: fmtEur(avgSale) },
+    ].map(c => `<div style="background:var(--bg2);border-radius:var(--r);padding:12px;text-align:center;">
+      <div class="muted" style="font-size:11px;margin-bottom:4px;">${c.label}</div>
+      <div style="font-size:17px;font-weight:700;">${c.value}</div>
+    </div>`).join("");
+    wrap.appendChild(cardsWrap);
+
+    const dayTitle = document.createElement("div");
+    dayTitle.className = "merkliste-title";
+    dayTitle.style.marginBottom = "8px";
+    dayTitle.textContent = "Nach Tag";
+    wrap.appendChild(dayTitle);
+
+    const dayWrap = document.createElement("div");
+    dayWrap.style.cssText = "display:flex;flex-direction:column;gap:6px;margin-bottom:18px;";
+    const maxDayRevenue = Math.max(...Object.values(byDay).map(d => d.revenue), 1);
+    Object.keys(byDay).sort().forEach(key => {
+      const d = byDay[key];
+      const pct = Math.round((d.revenue / maxDayRevenue) * 100);
+      dayWrap.insertAdjacentHTML("beforeend", `
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:12px;width:62px;flex-shrink:0;">${d.label}</span>
+          <div style="flex:1;background:var(--bg2);border-radius:6px;height:18px;overflow:hidden;">
+            <div style="width:${pct}%;height:100%;background:var(--info);"></div>
+          </div>
+          <span style="font-size:12px;width:74px;text-align:right;flex-shrink:0;">${fmtEur(d.revenue)}</span>
+        </div>`);
+    });
+    wrap.appendChild(dayWrap);
+
+    const twoColWrap = document.createElement("div");
+    twoColWrap.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;";
+
+    const zahlungsartCol = document.createElement("div");
+    zahlungsartCol.innerHTML = `<div class="merkliste-title" style="margin-bottom:8px;">Zahlungsart</div>`;
+    Object.keys(byZahlungsart).sort((a, b) => byZahlungsart[b] - byZahlungsart[a]).forEach(key => {
+      const isPending = key === "Zahlung ausstehend";
+      zahlungsartCol.insertAdjacentHTML("beforeend", `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;${isPending ? "color:var(--warn);" : ""}">
+        <span>${isPending ? "⚠️ " : ""}${key}</span><span>${fmtEur(byZahlungsart[key])}</span>
+      </div>`);
+    });
+    twoColWrap.appendChild(zahlungsartCol);
+
+    const lieferartCol = document.createElement("div");
+    lieferartCol.innerHTML = `<div class="merkliste-title" style="margin-bottom:8px;">Mitnahme/Versand</div>`;
+    Object.keys(byLieferart).forEach(key => {
+      lieferartCol.insertAdjacentHTML("beforeend", `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;">
+        <span>${key}</span><span>${fmtEur(byLieferart[key])}</span>
+      </div>`);
+    });
+    twoColWrap.appendChild(lieferartCol);
+    wrap.appendChild(twoColWrap);
+
+    const vkTitle = document.createElement("div");
+    vkTitle.className = "merkliste-title";
+    vkTitle.style.marginBottom = "8px";
+    vkTitle.textContent = "Nach Verkäufer";
+    wrap.appendChild(vkTitle);
+
+    const vkWrap = document.createElement("div");
+    vkWrap.style.cssText = "display:flex;flex-direction:column;gap:6px;";
+    Object.keys(byVerkaeufer).sort((a, b) => byVerkaeufer[b].revenue - byVerkaeufer[a].revenue).forEach(name => {
+      const v = byVerkaeufer[name];
+      vkWrap.insertAdjacentHTML("beforeend", `<div style="display:flex;justify-content:space-between;background:var(--bg2);border-radius:var(--r);padding:8px 12px;font-size:13px;">
+        <span>${name}</span><span>${fmtEur(v.revenue)} · ${v.sales.size} Verkäufe</span>
+      </div>`);
+    });
+    wrap.appendChild(vkWrap);
+  } catch(e) {
+    wrap.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;color:var(--err);">Fehler: ${e.message}</div>`;
   }
 }
 
@@ -4635,41 +4793,57 @@ function renderSalesListen(wrap) {
   const custWrap = document.createElement("div");
   custWrap.style.cssText = "margin-top:16px;";
   custWrap.innerHTML = `
-    <label class="muted" style="font-size:12px;display:block;margin-bottom:4px;">Kundenname</label>
-    <input type="text" id="cart-kunde-name" value="${cart.kunde.name || ""}" placeholder="z.B. Familie Berger" style="margin-bottom:8px;" />
-    ${hasVersand ? `
-    <div style="display:flex;align-items:center;gap:6px;margin:10px 0 8px;">
-      <i class="ti ti-truck-delivery" style="font-size:14px;color:var(--warn);"></i>
-      <span style="font-size:12px;font-weight:500;color:var(--warn);">Versanddaten (für mind. 1 Position nötig)</span>
+    <div class="merkliste-title" style="margin-bottom:8px;">Kunde</div>
+    <div style="background:var(--bg2);border-radius:var(--r);padding:10px;margin-bottom:12px;">
+      <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Kundenname</label>
+      <input type="text" id="cart-kunde-name" value="${cart.kunde.name || ""}" placeholder="z.B. Familie Berger" style="margin-bottom:8px;" />
+      <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">E-Mail-Adresse${hasVersand ? " *" : ""}</label>
+      <input type="email" id="cart-kunde-email" value="${cart.kunde.email || ""}" placeholder="kunde@beispiel.de" style="margin-bottom:8px;" />
+      <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Telefon</label>
+      <input type="tel" id="cart-kunde-telefon" value="${cart.kunde.telefon || ""}" style="margin-bottom:0;" />
     </div>
-    <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Straße &amp; Hausnummer</label>
-    <input type="text" id="cart-kunde-strasse" value="${cart.kunde.strasse || ""}" style="margin-bottom:8px;" />
-    <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">PLZ &amp; Ort</label>
-    <input type="text" id="cart-kunde-plzort" value="${cart.kunde.plzOrt || ""}" style="margin-bottom:8px;" />
-    <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">E-Mail *</label>
-    <input type="email" id="cart-kunde-email" value="${cart.kunde.email || ""}" placeholder="kunde@beispiel.de" style="margin-bottom:8px;" />
-    <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Telefonnummer</label>
-    <input type="tel" id="cart-kunde-telefon" value="${cart.kunde.telefon || ""}" style="margin-bottom:8px;" />
-    <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Notiz</label>
-    <input type="text" id="cart-kunde-notiz" value="${cart.kunde.notiz || ""}" style="margin-bottom:8px;" />` : ""}
+
+    <div class="merkliste-title" style="margin-bottom:8px;">Lieferanschrift</div>
+    <div style="background:var(--bg2);border-radius:var(--r);padding:10px;margin-bottom:12px;">
+      <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Name</label>
+      <input type="text" id="cart-kunde-liefer-name" value="${cart.kunde.lieferName || ""}" style="margin-bottom:8px;" />
+      <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Firma (optional)</label>
+      <input type="text" id="cart-kunde-liefer-firma" value="${cart.kunde.lieferFirma || ""}" style="margin-bottom:8px;" />
+      <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Straße &amp; Hausnummer${hasVersand ? " *" : ""}</label>
+      <input type="text" id="cart-kunde-strasse" value="${cart.kunde.strasse || ""}" style="margin-bottom:8px;" />
+      <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">PLZ &amp; Ort${hasVersand ? " *" : ""}</label>
+      <input type="text" id="cart-kunde-plzort" value="${cart.kunde.plzOrt || ""}" style="margin-bottom:0;" />
+    </div>
+
+    <div class="merkliste-title" style="margin-bottom:8px;">Notiz</div>
+    <div style="background:var(--bg2);border-radius:var(--r);padding:10px;margin-bottom:12px;">
+      <input type="text" id="cart-kunde-notiz" value="${cart.kunde.notiz || ""}" style="margin-bottom:0;" />
+    </div>
+
+    ${hasVersand ? `<div class="muted" style="font-size:11px;color:var(--warn);margin-bottom:8px;">* Bei Versand-Positionen benötigt.</div>` : ""}
   `;
   wrap.appendChild(custWrap);
 
+  // Immer ALLE Felder lesen und speichern, unabhängig von Mitnahme/Versand
+  // - vorher wurden Straße/PLZ/E-Mail/Telefon/Notiz nur erfasst, wenn
+  // mindestens eine Versand-Position vorlag, jetzt immer sichtbar und
+  // immer speicherbar (Pflicht bleibt weiterhin nur bei Versand, siehe
+  // Validierung im Abschluss-Button).
   const saveKunde = () => {
-    cart.kunde.name = qs("#cart-kunde-name")?.value.trim() || "";
-    if (hasVersand) {
-      cart.kunde.strasse = qs("#cart-kunde-strasse")?.value.trim() || "";
-      cart.kunde.plzOrt  = qs("#cart-kunde-plzort")?.value.trim() || "";
-      cart.kunde.email   = qs("#cart-kunde-email")?.value.trim() || "";
-      cart.kunde.telefon = qs("#cart-kunde-telefon")?.value.trim() || "";
-      cart.kunde.notiz   = qs("#cart-kunde-notiz")?.value.trim() || "";
-    }
+    cart.kunde.name        = qs("#cart-kunde-name")?.value.trim() || "";
+    cart.kunde.email       = qs("#cart-kunde-email")?.value.trim() || "";
+    cart.kunde.telefon     = qs("#cart-kunde-telefon")?.value.trim() || "";
+    cart.kunde.lieferName  = qs("#cart-kunde-liefer-name")?.value.trim() || "";
+    cart.kunde.lieferFirma = qs("#cart-kunde-liefer-firma")?.value.trim() || "";
+    cart.kunde.strasse     = qs("#cart-kunde-strasse")?.value.trim() || "";
+    cart.kunde.plzOrt      = qs("#cart-kunde-plzort")?.value.trim() || "";
+    cart.kunde.notiz       = qs("#cart-kunde-notiz")?.value.trim() || "";
     touchSku(uuid);
     sendWebhook("CART_HEADER_SET", {
       cartUuid: uuid, status: cart.status,
-      kundeName: cart.kunde.name, kundeStrasse: cart.kunde.strasse,
-      kundePlzOrt: cart.kunde.plzOrt, kundeEmail: cart.kunde.email,
-      kundeTelefon: cart.kunde.telefon, kundeNotiz: cart.kunde.notiz,
+      kundeName: cart.kunde.name, kundeEmail: cart.kunde.email, kundeTelefon: cart.kunde.telefon,
+      kundeLieferName: cart.kunde.lieferName, kundeLieferFirma: cart.kunde.lieferFirma,
+      kundeStrasse: cart.kunde.strasse, kundePlzOrt: cart.kunde.plzOrt, kundeNotiz: cart.kunde.notiz,
     });
   };
   // Debounced statt pro Feld einzeln sync'en - beim Durchtabben durch
@@ -4783,15 +4957,31 @@ function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
         <button class="btn-sm btn-resume-cart"><i class="ti ti-chevron-right"></i> Weiter</button>
         <button class="btn-sm btn-danger btn-delete-cart"><i class="ti ti-trash"></i></button>
       </div>`;
-    row.querySelector(".btn-resume-cart").addEventListener("click", () => {
+    row.querySelector(".btn-resume-cart").addEventListener("click", async () => {
+      // Vor der Übernahme zwingend den frischen Serverstand holen - sonst
+      // kann eine veraltete lokale Kopie (z.B. weil ein anderer Verkäufer
+      // die Liste inzwischen bearbeitet hat) beim Statuswechsel auf OFFEN
+      // versehentlich bereits gespeicherte Kundendaten überschreiben.
+      const btn = row.querySelector(".btn-resume-cart");
+      btn.disabled = true;
+      btn.innerHTML = `<i class="ti ti-loader-2" style="animation:spin .8s linear infinite;"></i> Lädt…`;
+      await loadCartsOnly();
+      const fresh = carts[id];
+      if (!fresh) {
+        showNotification("Verkaufsliste ist nicht mehr vorhanden - vermutlich bereits von jemand anderem bearbeitet.", "err");
+        renderSales();
+        return;
+      }
+
       if (uuid !== id && (activeCart.items.length > 0 || activeCart.kunde.name)) parkCart(uuid);
       activeCartUuid = id;
-      carts[id].status = "OFFEN";
+      fresh.status = "OFFEN";
       touchSku(id);
       sendWebhook("CART_HEADER_SET", {
         cartUuid: id, status: "OFFEN",
-        kundeName: c.kunde.name, kundeStrasse: c.kunde.strasse,
-        kundePlzOrt: c.kunde.plzOrt, kundeEmail: c.kunde.email, kundeTelefon: c.kunde.telefon, kundeNotiz: c.kunde.notiz,
+        kundeName: fresh.kunde.name, kundeEmail: fresh.kunde.email, kundeTelefon: fresh.kunde.telefon,
+        kundeLieferName: fresh.kunde.lieferName, kundeLieferFirma: fresh.kunde.lieferFirma,
+        kundeStrasse: fresh.kunde.strasse, kundePlzOrt: fresh.kunde.plzOrt, kundeNotiz: fresh.kunde.notiz,
       });
       saveUIState();
       renderSales();
@@ -4801,8 +4991,9 @@ function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
       touchSku(id);
       sendWebhook("CART_HEADER_SET", {
         cartUuid: id, status: "GELOESCHT",
-        kundeName: c.kunde.name, kundeStrasse: c.kunde.strasse,
-        kundePlzOrt: c.kunde.plzOrt, kundeEmail: c.kunde.email, kundeTelefon: c.kunde.telefon, kundeNotiz: c.kunde.notiz,
+        kundeName: c.kunde.name, kundeEmail: c.kunde.email, kundeTelefon: c.kunde.telefon,
+        kundeLieferName: c.kunde.lieferName, kundeLieferFirma: c.kunde.lieferFirma,
+        kundeStrasse: c.kunde.strasse, kundePlzOrt: c.kunde.plzOrt, kundeNotiz: c.kunde.notiz,
       });
       delete carts[id];
       renderSales();
@@ -5068,14 +5259,16 @@ function sendWebhook(action, data) {
       payload.listName = data.listName || "";
       break;
     case "CART_HEADER_SET":
-      payload.cartUuid     = data.cartUuid;
-      payload.status       = data.status || "OFFEN";
-      payload.kundeName    = data.kundeName    || "";
-      payload.kundeStrasse = data.kundeStrasse || "";
-      payload.kundePlzOrt  = data.kundePlzOrt  || "";
-      payload.kundeEmail   = data.kundeEmail   || "";
-      payload.kundeTelefon = data.kundeTelefon || "";
-      payload.kundeNotiz   = data.kundeNotiz   || "";
+      payload.cartUuid         = data.cartUuid;
+      payload.status           = data.status || "OFFEN";
+      payload.kundeName        = data.kundeName        || "";
+      payload.kundeEmail       = data.kundeEmail        || "";
+      payload.kundeTelefon     = data.kundeTelefon      || "";
+      payload.kundeLieferName  = data.kundeLieferName   || "";
+      payload.kundeLieferFirma = data.kundeLieferFirma  || "";
+      payload.kundeStrasse     = data.kundeStrasse      || "";
+      payload.kundePlzOrt      = data.kundePlzOrt       || "";
+      payload.kundeNotiz       = data.kundeNotiz        || "";
       break;
     case "CART_ITEM_SET":
       payload.cartUuid  = data.cartUuid;
