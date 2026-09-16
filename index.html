@@ -62,11 +62,12 @@
     .badge.info{background:var(--info-bg);color:var(--info);}
     .badge.err{background:var(--err-bg);color:var(--err);}
     .muted{color:var(--text2);font-size:13px;}
-    .tabs{display:flex;border-bottom:0.5px solid var(--border);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
-    .tabs::-webkit-scrollbar{display:none;}
-    .tab{flex:0 0 auto;min-width:64px;padding:10px 10px;border:none;background:none;cursor:pointer;font-size:11px;color:var(--text2);border-bottom:2px solid transparent;display:flex;flex-direction:column;align-items:center;gap:3px;transition:color .15s;white-space:nowrap;}
-    .tab.active{color:var(--info);border-bottom-color:var(--info);}
-    .tab i{font-size:20px;}
+    #nav-menu-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:997;}
+    .tabs{position:absolute;top:64px;left:16px;display:flex;flex-direction:column;gap:2px;background:var(--bg);border-radius:14px;padding:8px;max-width:260px;min-width:210px;box-shadow:0 10px 30px rgba(0,0,0,.35);max-height:75vh;overflow-y:auto;}
+    .tab{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:11px 14px;border:none;background:none;cursor:pointer;font-size:14px;color:var(--text);border-radius:10px;text-align:left;white-space:nowrap;transition:background .15s;}
+    .tab:hover{background:var(--bg2);}
+    .tab.active{background:var(--info-bg);color:var(--info);font-weight:600;}
+    .tab i{font-size:18px;flex-shrink:0;}
     .notification{margin:8px 16px 0;padding:8px 12px;border-radius:var(--r);font-size:13px;}
     .notif-ok{background:var(--ok-bg);color:var(--ok);}
     .notif-warn{background:var(--warn-bg);color:var(--warn);}
@@ -99,6 +100,12 @@
     .ac-item:last-child{border-bottom:none;}
     .ac-item:hover,.ac-item.focused{background:var(--info-bg);color:var(--info);}
     .filter-bar{background:var(--bg2);border-radius:var(--rl);padding:10px;margin-bottom:12px;}
+    .filter-bar .search-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+    .filter-bar .search-row .search-bar{flex:1;min-width:0;margin-bottom:0;}
+    .filter-bar .search-row .filter-toggle{flex-shrink:0;white-space:nowrap;margin-top:0;}
+    .filter-extra-toggle{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2);background:none;border:none;padding:2px 0 4px;cursor:pointer;width:100%;text-align:left;}
+    .filter-extra{display:none;flex-direction:column;gap:8px;}
+    .filter-extra.open{display:flex;}
     .filter-toggle{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;user-select:none;}
     .filter-toggle input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--info);}
     .slave-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--r);padding:10px;margin-bottom:6px;margin-left:12px;border-left:3px solid var(--info);}
@@ -111,10 +118,16 @@
     .copy-btn:active{background:var(--info-bg);color:var(--info);}
     @media(min-width:720px){
       .content-wrap{padding:16px 24px;}
-      .filter-bar{display:grid;grid-template-columns:1.4fr 1fr 1fr auto;gap:10px;align-items:center;padding:12px 14px;}
-      .filter-bar .search-bar,
+      .filter-bar{display:grid;gap:10px;align-items:center;padding:12px 14px;}
+      .filter-bar.has-checkbox{grid-template-columns:1.4fr auto 1fr 1fr;}
+      .filter-bar:not(.has-checkbox){grid-template-columns:1.4fr 1fr 1fr;}
+      .filter-bar .search-row{display:contents;}
+      .filter-bar .search-row .search-bar,
+      .filter-bar .search-row .filter-toggle,
       .filter-bar .ac-wrap{margin-bottom:0;}
       .filter-bar .filter-toggle{margin-top:0;white-space:nowrap;}
+      .filter-extra-toggle{display:none;}
+      .filter-extra{display:contents !important;}
       #prep-results{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;align-items:start;}
       #prep-results > .muted{grid-column:1/-1;}
       #prep-results .card{margin-bottom:0;}
@@ -127,9 +140,6 @@
       #detail-slaves .slave-card{margin-bottom:0;margin-left:0;}
       .merkliste-group-wrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;align-items:start;margin-bottom:10px;}
       .merkliste-group-wrap > div{margin-bottom:0 !important;}
-      .tabs{justify-content:flex-start;}
-      .tab{flex:0 0 auto;padding:10px 22px;font-size:12px;}
-      .tab i{font-size:18px;}
     }
     @media(min-width:1200px){
       #prep-results{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));}
@@ -224,13 +234,19 @@
   </div>
 
   <div style="padding:8px 16px 0;">
-    <button id="btn-switch-messe" style="width:100%;background:var(--info);color:#fff;border:none;border-radius:14px;padding:12px 16px;font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-      <span style="display:flex;align-items:center;gap:9px;min-width:0;overflow:hidden;">
-        <i class="ti ti-calendar-event" style="font-size:17px;flex-shrink:0;"></i>
-        <span id="messe-label-display" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Keine Messe ausgewählt</span>
-      </span>
-      <i class="ti ti-chevron-down" style="font-size:13px;opacity:.85;flex-shrink:0;"></i>
-    </button>
+    <div id="messe-bar" style="width:100%;background:var(--info);color:#fff;border-radius:14px;display:flex;align-items:center;overflow:hidden;">
+      <button id="btn-nav-menu" style="background:none;border:none;color:inherit;padding:12px 10px 12px 14px;cursor:pointer;display:flex;align-items:center;flex-shrink:0;" title="Menü">
+        <i class="ti ti-menu-2" style="font-size:20px;"></i>
+      </button>
+      <div style="width:1px;height:20px;background:rgba(255,255,255,.35);flex-shrink:0;"></div>
+      <button id="btn-switch-messe" style="flex:1;min-width:0;background:none;border:none;color:inherit;padding:12px 14px 12px 10px;font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <span style="display:flex;align-items:center;gap:9px;min-width:0;overflow:hidden;">
+          <i class="ti ti-calendar-event" style="font-size:17px;flex-shrink:0;"></i>
+          <span id="messe-label-display" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Keine Messe ausgewählt</span>
+        </span>
+        <i class="ti ti-chevron-down" style="font-size:13px;opacity:.85;flex-shrink:0;"></i>
+      </button>
+    </div>
   </div>
 
   <div style="padding:6px 16px 0;display:flex;align-items:center;justify-content:space-between;">
@@ -317,16 +333,18 @@
 
   </div>
 
-  <div class="tabs" style="margin-top:10px;">
-    <button class="tab active" data-tab="prep" data-roles="supervisor,planer"><i class="ti ti-clipboard-list"></i>Vorbereitung</button>
-    <button class="tab" data-tab="merkliste" data-roles="supervisor,planer"><i class="ti ti-star"></i>Merkliste</button>
-    <button class="tab" data-tab="preise" data-roles="supervisor,planer"><i class="ti ti-currency-euro"></i>Messepreise</button>
-    <button class="tab" data-tab="warehouse" data-roles="supervisor,planer,kommission"><i class="ti ti-packages"></i>Kommission</button>
-    <button class="tab" data-tab="messebestand" data-roles="supervisor,planer,kommission,verkauf"><i class="ti ti-box"></i>Messebestand</button>
-    <button class="tab" data-tab="inventur" data-roles="supervisor,planer,kommission,verkauf"><i class="ti ti-clipboard-check"></i>Inventur</button>
-    <button class="tab" data-tab="fehlmengen" data-roles="supervisor,planer"><i class="ti ti-alert-triangle"></i>Fehlmengen</button>
-    <button class="tab" data-tab="sales" data-roles="supervisor,planer,verkauf"><i class="ti ti-shopping-cart"></i>Verkauf</button>
-    <button class="tab" data-tab="journal" data-roles="supervisor"><i class="ti ti-history"></i>Journal</button>
+  <div id="nav-menu-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:997;">
+    <div id="nav-menu-panel" class="tabs">
+      <button class="tab active" data-tab="prep" data-roles="supervisor,planer"><i class="ti ti-clipboard-list"></i>Vorbereitung</button>
+      <button class="tab" data-tab="merkliste" data-roles="supervisor,planer"><i class="ti ti-star"></i>Merkliste</button>
+      <button class="tab" data-tab="preise" data-roles="supervisor,planer"><i class="ti ti-currency-euro"></i>Messepreise</button>
+      <button class="tab" data-tab="warehouse" data-roles="supervisor,planer,kommission"><i class="ti ti-packages"></i>Kommission</button>
+      <button class="tab" data-tab="messebestand" data-roles="supervisor,planer,kommission,verkauf"><i class="ti ti-box"></i>Messebestand</button>
+      <button class="tab" data-tab="inventur" data-roles="supervisor,planer,kommission,verkauf"><i class="ti ti-clipboard-check"></i>Inventur</button>
+      <button class="tab" data-tab="fehlmengen" data-roles="supervisor,planer"><i class="ti ti-alert-triangle"></i>Fehlmengen</button>
+      <button class="tab" data-tab="sales" data-roles="supervisor,planer,verkauf"><i class="ti ti-shopping-cart"></i>Verkauf</button>
+      <button class="tab" data-tab="journal" data-roles="supervisor"><i class="ti ti-history"></i>Journal</button>
+    </div>
   </div>
 
   <div id="notification-area"></div>
@@ -353,6 +371,31 @@ const COL = {
 };
 
 const qs = s => document.querySelector(s);
+
+// "Artikel Messestand"/"Nur Messestand-Artikel" - ein Artikel gilt als am
+// Stand, wenn er ENTWEDER kommissioniert wurde ODER bereits eine
+// Inventur-Zählung existiert (z.B. Direktlieferung an den Stand, ohne
+// dass dafür kommissioniert wurde - siehe Chat-Absprache).
+function isMessestandArtikel(sku) {
+  if ((committed[sku] || 0) > 0) return true;
+  const inv = inventur[sku];
+  return !!(inv && inv.byPlace && Object.keys(inv.byPlace).length > 0);
+}
+
+// Aufklapp-Button für Lieferant/Kategorie in den Filterleisten - auf
+// Mobil eingeklappt (siehe .filter-extra CSS), auf Desktop per
+// display:contents ohnehin immer sichtbar (Button dort per CSS
+// ausgeblendet), deshalb hier keine Rollen-/Breiten-Unterscheidung nötig.
+function wireFilterExtraToggle(toggleBtnId, extraId) {
+  const btn = qs("#" + toggleBtnId);
+  const extra = qs("#" + extraId);
+  if (!btn || !extra) return;
+  btn.addEventListener("click", () => {
+    const open = extra.classList.toggle("open");
+    const icon = btn.querySelector("i");
+    if (icon) icon.className = open ? "ti ti-chevron-up" : "ti ti-chevron-down";
+  });
+}
 
 let articles    = [];
 let artBySku    = {};
@@ -488,11 +531,11 @@ function getMesseColors(name) {
 }
 
 function applyMesseTheme(name) {
-  const btn = qs("#btn-switch-messe");
-  if (!btn) return;
+  const bar = qs("#messe-bar");
+  if (!bar) return;
   const c = getMesseColors(name);
-  btn.style.background = c.bg;
-  btn.style.color = c.fg;
+  bar.style.background = c.bg;
+  bar.style.color = c.fg;
 }
 
 async function fetchMergedMessenList() {
@@ -1795,23 +1838,30 @@ function renderPrep() {
   const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
 
   wrap.innerHTML = `
-    <div class="filter-bar">
-      <div class="search-bar" style="margin-bottom:8px;">
-        <i class="ti ti-search"></i>
-        <input type="text" id="prep-search" placeholder="Name, SKU oder EAN …" value="${prepSearch}" />
+    <div class="filter-bar has-checkbox">
+      <div class="search-row">
+        <div class="search-bar">
+          <i class="ti ti-search"></i>
+          <input type="text" id="prep-search" placeholder="Name, SKU oder EAN …" value="${prepSearch}" />
+        </div>
+        <label class="filter-toggle">
+          <input type="checkbox" id="prep-nur-lager" ${prepNurLager ? "checked" : ""} />
+          Lagerbestand
+        </label>
       </div>
-      <div class="ac-wrap">
-        <input type="text" id="prep-lieferant" placeholder="Lieferant / Hersteller …" value="${prepLieferant}" />
-        <div class="ac-dropdown" id="ac-lieferant" style="display:none;"></div>
+      <button type="button" class="filter-extra-toggle" id="prep-extra-toggle">
+        <i class="ti ti-chevron-down"></i> Weitere Filter (Lieferant, Kategorie)
+      </button>
+      <div class="filter-extra" id="prep-extra">
+        <div class="ac-wrap">
+          <input type="text" id="prep-lieferant" placeholder="Lieferant / Hersteller …" value="${prepLieferant}" />
+          <div class="ac-dropdown" id="ac-lieferant" style="display:none;"></div>
+        </div>
+        <div class="ac-wrap">
+          <input type="text" id="prep-kategorie" placeholder="Kategorie …" value="${prepKategorie}" />
+          <div class="ac-dropdown" id="ac-kategorie" style="display:none;"></div>
+        </div>
       </div>
-      <div class="ac-wrap">
-        <input type="text" id="prep-kategorie" placeholder="Kategorie …" value="${prepKategorie}" />
-        <div class="ac-dropdown" id="ac-kategorie" style="display:none;"></div>
-      </div>
-      <label class="filter-toggle" style="margin-top:4px;">
-        <input type="checkbox" id="prep-nur-lager" ${prepNurLager ? "checked" : ""} />
-        Nur Artikel mit Lagerbestand &gt; 0
-      </label>
     </div>
 
     <div id="prep-results"></div>
@@ -1829,6 +1879,7 @@ function renderPrep() {
   qs("#prep-lieferant").addEventListener("input", e => { prepLieferant = e.target.value; prepPage = 0; runPrepSearch(); });
   qs("#prep-kategorie").addEventListener("input", e => { prepKategorie = e.target.value; prepPage = 0; runPrepSearch(); });
   qs("#prep-nur-lager").addEventListener("change", e => { prepNurLager = e.target.checked; prepPage = 0; runPrepSearch(); });
+  wireFilterExtraToggle("prep-extra-toggle", "prep-extra");
 
   runPrepSearch();
 }
@@ -2115,23 +2166,30 @@ function renderPreise() {
   const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
 
   wrap.innerHTML = `
-    <div class="filter-bar">
-      <div class="search-bar" style="margin-bottom:8px;">
-        <i class="ti ti-search"></i>
-        <input type="text" id="preis-search" placeholder="Name, SKU oder EAN …" value="${preisSearch}" />
+    <div class="filter-bar has-checkbox">
+      <div class="search-row">
+        <div class="search-bar">
+          <i class="ti ti-search"></i>
+          <input type="text" id="preis-search" placeholder="Name, SKU oder EAN …" value="${preisSearch}" />
+        </div>
+        <label class="filter-toggle">
+          <input type="checkbox" id="preis-nur-ohne" ${preisNurOhne ? "checked" : ""} />
+          Ohne Preis
+        </label>
       </div>
-      <div class="ac-wrap">
-        <input type="text" id="preis-lieferant" placeholder="Lieferant / Hersteller …" value="${preisLieferant}" />
-        <div class="ac-dropdown" id="ac-preis-lieferant" style="display:none;"></div>
+      <button type="button" class="filter-extra-toggle" id="preis-extra-toggle">
+        <i class="ti ti-chevron-down"></i> Weitere Filter (Lieferant, Kategorie)
+      </button>
+      <div class="filter-extra" id="preis-extra">
+        <div class="ac-wrap">
+          <input type="text" id="preis-lieferant" placeholder="Lieferant / Hersteller …" value="${preisLieferant}" />
+          <div class="ac-dropdown" id="ac-preis-lieferant" style="display:none;"></div>
+        </div>
+        <div class="ac-wrap">
+          <input type="text" id="preis-kategorie" placeholder="Kategorie …" value="${preisKategorie}" />
+          <div class="ac-dropdown" id="ac-preis-kategorie" style="display:none;"></div>
+        </div>
       </div>
-      <div class="ac-wrap">
-        <input type="text" id="preis-kategorie" placeholder="Kategorie …" value="${preisKategorie}" />
-        <div class="ac-dropdown" id="ac-preis-kategorie" style="display:none;"></div>
-      </div>
-      <label class="filter-toggle" style="margin-top:4px;">
-        <input type="checkbox" id="preis-nur-ohne" ${preisNurOhne ? "checked" : ""} />
-        Nur Artikel ohne hinterlegten Messepreis
-      </label>
     </div>
     <div id="preis-results"></div>
   `;
@@ -2146,6 +2204,7 @@ function renderPreise() {
   qs("#preis-lieferant").addEventListener("input", e => { preisLieferant = e.target.value; runPreisSearch(); });
   qs("#preis-kategorie").addEventListener("input", e => { preisKategorie = e.target.value; runPreisSearch(); });
   qs("#preis-nur-ohne").addEventListener("change", e => { preisNurOhne = e.target.checked; runPreisSearch(); });
+  wireFilterExtraToggle("preis-extra-toggle", "preis-extra");
 
   runPreisSearch();
 }
@@ -3460,23 +3519,30 @@ function renderInventurliste() {
 
   wrap.innerHTML = `
     <p class="muted" style="margin-bottom:12px;">Inventur je Artikel und Lagerplatz - auch für Artikel, die z.B. per Direktlieferung an den Stand kamen, unabhängig von der Kommissionierung. Zeigt zunächst das System-Soll (kommissionierte Menge) - sobald ein Artikel gezählt wurde, zählt stattdessen die aktuelle Summe aller erfassten Lagerplätze.</p>
-    <div class="filter-bar">
-      <div class="search-bar" style="margin-bottom:8px;">
-        <i class="ti ti-search"></i>
-        <input type="text" id="inventur-search" placeholder="Name, SKU oder EAN …" value="${inventurSearch}" />
+    <div class="filter-bar has-checkbox">
+      <div class="search-row">
+        <div class="search-bar">
+          <i class="ti ti-search"></i>
+          <input type="text" id="inventur-search" placeholder="Name, SKU oder EAN …" value="${inventurSearch}" />
+        </div>
+        <label class="filter-toggle">
+          <input type="checkbox" id="inventur-messestand" ${inventurNurMessestand ? "checked" : ""} />
+          Messestand
+        </label>
       </div>
-      <div class="ac-wrap">
-        <input type="text" id="inventur-lieferant" placeholder="Lieferant / Hersteller …" value="${inventurLieferant}" />
-        <div class="ac-dropdown" id="ac-inventur-lieferant" style="display:none;"></div>
+      <button type="button" class="filter-extra-toggle" id="inventur-extra-toggle">
+        <i class="ti ti-chevron-down"></i> Weitere Filter (Lieferant, Kategorie)
+      </button>
+      <div class="filter-extra" id="inventur-extra">
+        <div class="ac-wrap">
+          <input type="text" id="inventur-lieferant" placeholder="Lieferant / Hersteller …" value="${inventurLieferant}" />
+          <div class="ac-dropdown" id="ac-inventur-lieferant" style="display:none;"></div>
+        </div>
+        <div class="ac-wrap">
+          <input type="text" id="inventur-kategorie" placeholder="Kategorie …" value="${inventurKategorie}" />
+          <div class="ac-dropdown" id="ac-inventur-kategorie" style="display:none;"></div>
+        </div>
       </div>
-      <div class="ac-wrap">
-        <input type="text" id="inventur-kategorie" placeholder="Kategorie …" value="${inventurKategorie}" />
-        <div class="ac-dropdown" id="ac-inventur-kategorie" style="display:none;"></div>
-      </div>
-      <label class="filter-toggle" style="margin-top:4px;">
-        <input type="checkbox" id="inventur-messestand" ${inventurNurMessestand ? "checked" : ""} />
-        Nur Messestand-Artikel
-      </label>
     </div>
     <div id="inventur-results"></div>
   `;
@@ -3491,6 +3557,7 @@ function renderInventurliste() {
   qs("#inventur-lieferant").addEventListener("input", e => { inventurLieferant = e.target.value; runInventurSearch(); });
   qs("#inventur-kategorie").addEventListener("input", e => { inventurKategorie = e.target.value; runInventurSearch(); });
   qs("#inventur-messestand").addEventListener("change", e => { inventurNurMessestand = e.target.checked; runInventurSearch(); });
+  wireFilterExtraToggle("inventur-extra-toggle", "inventur-extra");
 
   runInventurSearch();
 }
@@ -3517,7 +3584,7 @@ function runInventurSearch() {
   }
 
   let base = articles.filter(a => !isMaster(a));
-  if (inventurNurMessestand) base = base.filter(a => (planned[a.sku] || 0) > 0);
+  if (inventurNurMessestand) base = base.filter(a => isMessestandArtikel(a.sku));
 
   const filtered = base.filter(a => {
     if (sl && !(a.supplier||"").toLowerCase().includes(sl)) return false;
@@ -3781,17 +3848,24 @@ function renderFehlmengen() {
 
   wrap.innerHTML = `
     <div class="filter-bar">
-      <div class="search-bar" style="margin-bottom:8px;">
-        <i class="ti ti-search"></i>
-        <input type="text" id="fehlmenge-search" placeholder="Name, SKU oder EAN …" value="${fehlmengeSearch}" />
+      <div class="search-row">
+        <div class="search-bar">
+          <i class="ti ti-search"></i>
+          <input type="text" id="fehlmenge-search" placeholder="Name, SKU oder EAN …" value="${fehlmengeSearch}" />
+        </div>
       </div>
-      <div class="ac-wrap">
-        <input type="text" id="fehlmenge-kategorie" placeholder="Kategorie …" value="${fehlmengeKategorie}" />
-        <div class="ac-dropdown" id="ac-fehlmenge-kategorie" style="display:none;"></div>
-      </div>
-      <div class="ac-wrap">
-        <input type="text" id="fehlmenge-lieferant" placeholder="Lieferant / Hersteller …" value="${fehlmengeLieferant}" />
-        <div class="ac-dropdown" id="ac-fehlmenge-lieferant" style="display:none;"></div>
+      <button type="button" class="filter-extra-toggle" id="fehlmenge-extra-toggle">
+        <i class="ti ti-chevron-down"></i> Weitere Filter (Lieferant, Kategorie)
+      </button>
+      <div class="filter-extra" id="fehlmenge-extra">
+        <div class="ac-wrap">
+          <input type="text" id="fehlmenge-kategorie" placeholder="Kategorie …" value="${fehlmengeKategorie}" />
+          <div class="ac-dropdown" id="ac-fehlmenge-kategorie" style="display:none;"></div>
+        </div>
+        <div class="ac-wrap">
+          <input type="text" id="fehlmenge-lieferant" placeholder="Lieferant / Hersteller …" value="${fehlmengeLieferant}" />
+          <div class="ac-dropdown" id="ac-fehlmenge-lieferant" style="display:none;"></div>
+        </div>
       </div>
       <div style="grid-column:1/-1;">
         <div class="muted" style="font-size:11px;margin-bottom:6px;">Lager in der Berechnung berücksichtigen</div>
@@ -3807,6 +3881,7 @@ function renderFehlmengen() {
     <div id="fehlmenge-results"></div>
   `;
 
+  wireFilterExtraToggle("fehlmenge-extra-toggle", "fehlmenge-extra");
   makeAutocomplete(qs("#fehlmenge-kategorie"), qs("#ac-fehlmenge-kategorie"), () => allKategorien, val => {
     fehlmengeKategorie = val; runFehlmengeSearch();
   });
@@ -4705,23 +4780,30 @@ function renderPreisliste(wrap) {
   const allKategorien  = [...new Set(articles.map(a => (a.category||"").split(" | ")[0].trim()).filter(Boolean))].sort();
 
   wrap.innerHTML = `
-    <div class="filter-bar">
-      <div class="search-bar" style="margin-bottom:8px;">
-        <i class="ti ti-search"></i>
-        <input type="text" id="preisliste-search" placeholder="Name, SKU oder EAN …" value="${preislisteSearch}" />
+    <div class="filter-bar has-checkbox">
+      <div class="search-row">
+        <div class="search-bar">
+          <i class="ti ti-search"></i>
+          <input type="text" id="preisliste-search" placeholder="Name, SKU oder EAN …" value="${preislisteSearch}" />
+        </div>
+        <label class="filter-toggle">
+          <input type="checkbox" id="preisliste-messestand" ${preislisteNurMessestand ? "checked" : ""} />
+          Messestand
+        </label>
       </div>
-      <div class="ac-wrap">
-        <input type="text" id="preisliste-lieferant" placeholder="Lieferant / Hersteller …" value="${preislisteLieferant}" />
-        <div class="ac-dropdown" id="ac-preisliste-lieferant" style="display:none;"></div>
+      <button type="button" class="filter-extra-toggle" id="preisliste-extra-toggle">
+        <i class="ti ti-chevron-down"></i> Weitere Filter (Lieferant, Kategorie)
+      </button>
+      <div class="filter-extra" id="preisliste-extra">
+        <div class="ac-wrap">
+          <input type="text" id="preisliste-lieferant" placeholder="Lieferant / Hersteller …" value="${preislisteLieferant}" />
+          <div class="ac-dropdown" id="ac-preisliste-lieferant" style="display:none;"></div>
+        </div>
+        <div class="ac-wrap">
+          <input type="text" id="preisliste-kategorie" placeholder="Kategorie …" value="${preislisteKategorie}" />
+          <div class="ac-dropdown" id="ac-preisliste-kategorie" style="display:none;"></div>
+        </div>
       </div>
-      <div class="ac-wrap">
-        <input type="text" id="preisliste-kategorie" placeholder="Kategorie …" value="${preislisteKategorie}" />
-        <div class="ac-dropdown" id="ac-preisliste-kategorie" style="display:none;"></div>
-      </div>
-      <label class="filter-toggle" style="margin-top:4px;">
-        <input type="checkbox" id="preisliste-messestand" ${preislisteNurMessestand ? "checked" : ""} />
-        Artikel Messestand
-      </label>
     </div>
     <div id="preisliste-results"></div>
     <div id="preisliste-pagination"></div>
@@ -4737,6 +4819,7 @@ function renderPreisliste(wrap) {
   qs("#preisliste-lieferant").addEventListener("input", e => { preislisteLieferant = e.target.value; preislistePage = 0; runPreislisteSearch(); });
   qs("#preisliste-kategorie").addEventListener("input", e => { preislisteKategorie = e.target.value; preislistePage = 0; runPreislisteSearch(); });
   qs("#preisliste-messestand").addEventListener("change", e => { preislisteNurMessestand = e.target.checked; preislistePage = 0; runPreislisteSearch(); });
+  wireFilterExtraToggle("preisliste-extra-toggle", "preisliste-extra");
 
   runPreislisteSearch();
 }
@@ -4762,7 +4845,7 @@ function runPreislisteSearch() {
 
   const filtered = articles.filter(a => {
     if (isMaster(a)) return false;
-    if (preislisteNurMessestand && (committed[a.sku] || 0) <= 0) return false;
+    if (preislisteNurMessestand && !isMessestandArtikel(a.sku)) return false;
     if (sl && !(a.supplier||"").toLowerCase().includes(sl)) return false;
     if (sk && !(a.category||"").toLowerCase().includes(sk)) return false;
     if (sq) {
@@ -5101,12 +5184,19 @@ function imgTag(art, size = 56) {
   </div>`;
 }
 
+qs("#btn-nav-menu").addEventListener("click", () => {
+  qs("#nav-menu-overlay").style.display = "block";
+});
+qs("#nav-menu-overlay").addEventListener("click", e => {
+  if (e.target.id === "nav-menu-overlay") qs("#nav-menu-overlay").style.display = "none";
+});
+
 document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
   currentView = t.dataset.tab;
   prepDetailSku       = null;
   merklisteDetailSku  = null;
   inventurDetailSku   = null;
-  t.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  qs("#nav-menu-overlay").style.display = "none";
   // v18-Update: laufender Refresh nur in Kommission (siehe
   // startAutoRefresh) - beim Wechsel in einen anderen Tab stattdessen
   // einmalig einen frischen Stand holen, damit man nicht auf den nächsten
