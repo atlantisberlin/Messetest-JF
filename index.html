@@ -967,6 +967,127 @@ function normalizeCommitLogEntry(raw) {
   return { chains: [], events: [] };
 }
 
+// ── ROLLENBASIERTES LADEN BEIM START (NEU v26) ─────────────────────────────
+// Verkauf braucht beim App-Start SOFORT die Warenkörbe (Verkaufsliste ist
+// die primäre Arbeitsfläche), aber nicht sofort den zeitgenauen
+// Kommissionierungsstand (Messebestand/Inventur können ein paar Sekunden
+// später fertig werden, ohne dass es auffällt). Bewusst als EIGENE
+// Funktionen statt loadRemoteState() umzubauen - keine Änderung an dem,
+// was für Supervisor/Planer/Kommission bereits zuverlässig funktioniert.
+async function loadCartsOnly() {
+  if (!WEBHOOK_URL) return;
+  try {
+    const url  = authUrl(WEBHOOK_URL + "?action=load_carts&messe=" + encodeURIComponent(messeLabel));
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const json = await resp.json();
+    if (!json.ok) {
+      if (json.code === 401) { clearAuth(); requireLogin(); return; }
+      throw new Error(json.error || "Fehler");
+    }
+    const serverCarts = json.carts || {};
+    const mergedCarts = {};
+    const allCartUuids = new Set([...Object.keys(serverCarts), ...Object.keys(carts)]);
+    allCartUuids.forEach(uuid => {
+      if (isProtected(uuid) || serverCarts[uuid] === undefined) {
+        if (carts[uuid] !== undefined) mergedCarts[uuid] = carts[uuid];
+      } else {
+        mergedCarts[uuid] = serverCarts[uuid];
+      }
+    });
+    carts = mergedCarts;
+    if (activeCartUuid && !carts[activeCartUuid]) activeCartUuid = null;
+  } catch(e) {
+    console.warn("loadCartsOnly:", e);
+  }
+}
+
+// Läuft im Hintergrund NACH dem Start (nicht awaited im Ladebalken) -
+// aktualisiert planned/committed/commitLog/preise/bestellt/inventur und
+// rendert am Ende einmal neu, falls der Nutzer inzwischen z.B. auf
+// Messebestand oder Inventur gewechselt ist.
+async function loadStateOnly() {
+  if (!WEBHOOK_URL) return;
+  try {
+    const url  = authUrl(WEBHOOK_URL + "?action=load_state&messe=" + encodeURIComponent(messeLabel));
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const json = await resp.json();
+    if (!json.ok) {
+      if (json.code === 401) { clearAuth(); requireLogin(); return; }
+      throw new Error(json.error || "Fehler");
+    }
+
+    const s = json.state || {};
+    planned = s.planned || {};
+
+    const serverCommitted = s.committed || {};
+    const serverCommitLog = s.commitLog || {};
+    const mergedCommitted = {};
+    const mergedCommitLog = {};
+    const allSkus = new Set([...Object.keys(serverCommitted), ...Object.keys(serverCommitLog), ...Object.keys(committed), ...Object.keys(commitLog)]);
+    allSkus.forEach(sku => {
+      const serverHasSku = serverCommitted[sku] !== undefined || serverCommitLog[sku] !== undefined;
+      if (isProtected(sku) || !serverHasSku) {
+        if (committed[sku] !== undefined) mergedCommitted[sku] = committed[sku];
+        if (commitLog[sku] !== undefined) mergedCommitLog[sku] = normalizeCommitLogEntry(commitLog[sku]);
+      } else {
+        if (serverCommitted[sku] !== undefined) mergedCommitted[sku] = serverCommitted[sku];
+        if (serverCommitLog[sku] !== undefined) mergedCommitLog[sku] = normalizeCommitLogEntry(serverCommitLog[sku]);
+      }
+    });
+    committed = mergedCommitted;
+    commitLog = mergedCommitLog;
+
+    applyPendingQueueToState();
+
+    commitDone = {};
+    Object.keys(planned).forEach(sku => {
+      if ((committed[sku] || 0) >= planned[sku]) commitDone[sku] = true;
+    });
+
+    const serverPreise = s.preise || {};
+    const mergedPreise = {};
+    const allPreisSkus = new Set([...Object.keys(serverPreise), ...Object.keys(preise)]);
+    allPreisSkus.forEach(sku => {
+      if (isProtected(sku) || serverPreise[sku] === undefined) {
+        if (preise[sku] !== undefined) mergedPreise[sku] = preise[sku];
+      } else {
+        mergedPreise[sku] = serverPreise[sku];
+      }
+    });
+    preise = mergedPreise;
+
+    const serverBestellt = s.bestellt || {};
+    const mergedBestellt = {};
+    const allBestelltSkus = new Set([...Object.keys(serverBestellt), ...Object.keys(bestellt)]);
+    allBestelltSkus.forEach(sku => {
+      if (isProtected(sku) || serverBestellt[sku] === undefined) {
+        if (bestellt[sku] !== undefined) mergedBestellt[sku] = bestellt[sku];
+      } else {
+        mergedBestellt[sku] = serverBestellt[sku];
+      }
+    });
+    bestellt = mergedBestellt;
+
+    const serverInventur = s.inventur || {};
+    const mergedInventur = {};
+    const allInventurSkus = new Set([...Object.keys(serverInventur), ...Object.keys(inventur)]);
+    allInventurSkus.forEach(sku => {
+      if (isProtected(sku) || serverInventur[sku] === undefined) {
+        if (inventur[sku] !== undefined) mergedInventur[sku] = inventur[sku];
+      } else {
+        mergedInventur[sku] = serverInventur[sku];
+      }
+    });
+    inventur = mergedInventur;
+
+    renderView();
+  } catch(e) {
+    console.warn("loadStateOnly:", e);
+  }
+}
+
 async function loadRemoteState(silent = false) {
   if (!WEBHOOK_URL) return;
   if (!silent) showNotification("Lade aktuellen Stand…", "ok");
@@ -5090,8 +5211,16 @@ async function startApp(forceReload = false) {
   if (!ok) return;
 
   if (WEBHOOK_URL && messeLabel) {
-    setLoadingStep("Lade Kommissionierungsstand…", 88);
-    await loadRemoteState(true);
+    if (getAuthRole() === "verkauf") {
+      // Verkauf: nur Warenkörbe blockierend laden (Verkaufsliste ist die
+      // primäre Arbeitsfläche) - der Kommissionierungsstand
+      // (Messebestand/Inventur) lädt im Hintergrund nach, siehe unten.
+      setLoadingStep("Lade Verkaufslisten…", 88);
+      await loadCartsOnly();
+    } else {
+      setLoadingStep("Lade Kommissionierungsstand…", 88);
+      await loadRemoteState(true);
+    }
   }
 
   setLoadingStep("Fast fertig…", 95);
@@ -5110,6 +5239,10 @@ async function startApp(forceReload = false) {
     await showMesseDialog();
   } else if (WEBHOOK_URL && messeLabel) {
     startAutoRefresh();
+    // Verkauf: Kommissionierungsstand jetzt im Hintergrund nachladen,
+    // ohne den Start weiter zu blockieren - rendert bei Fertigstellung
+    // einmal neu (relevant für Messebestand/Inventur).
+    if (getAuthRole() === "verkauf") loadStateOnly();
   }
 
   window.addEventListener("beforeunload", () => {
