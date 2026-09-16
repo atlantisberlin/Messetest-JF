@@ -63,7 +63,7 @@
     .badge.err{background:var(--err-bg);color:var(--err);}
     .muted{color:var(--text2);font-size:13px;}
     #nav-menu-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:997;}
-    .tabs{position:absolute;top:64px;left:16px;display:flex;flex-direction:column;gap:2px;background:var(--bg);border-radius:14px;padding:8px;max-width:260px;min-width:210px;box-shadow:0 10px 30px rgba(0,0,0,.35);max-height:75vh;overflow-y:auto;}
+    .tabs{position:fixed;display:flex;flex-direction:column;gap:2px;background:var(--bg);border-radius:14px;padding:8px;max-width:260px;min-width:210px;box-shadow:0 10px 30px rgba(0,0,0,.35);max-height:75vh;overflow-y:auto;}
     .tab{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:11px 14px;border:none;background:none;cursor:pointer;font-size:14px;color:var(--text);border-radius:10px;text-align:left;white-space:nowrap;transition:background .15s;}
     .tab:hover{background:var(--bg2);}
     .tab.active{background:var(--info-bg);color:var(--info);font-weight:600;}
@@ -5185,6 +5185,13 @@ function imgTag(art, size = 56) {
 }
 
 qs("#btn-nav-menu").addEventListener("click", () => {
+  // Position dynamisch am Button festmachen (statt fester Pixel-Werte) -
+  // funktioniert dadurch unabhängig davon, wo der Button tatsächlich auf
+  // dem Bildschirm sitzt (schmales Handy, breiter Desktop, etc.).
+  const btnRect = qs("#btn-nav-menu").getBoundingClientRect();
+  const panel = qs("#nav-menu-panel");
+  panel.style.top  = (btnRect.bottom + 6) + "px";
+  panel.style.left = btnRect.left + "px";
   qs("#nav-menu-overlay").style.display = "block";
 });
 qs("#nav-menu-overlay").addEventListener("click", e => {
