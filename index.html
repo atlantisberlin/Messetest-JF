@@ -396,6 +396,20 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
 // Stand, wenn er ENTWEDER kommissioniert wurde ODER bereits eine
 // Inventur-Zählung existiert (z.B. Direktlieferung an den Stand, ohne
 // dass dafür kommissioniert wurde - siehe Chat-Absprache).
+// "In Bearbeitung"-Signal für Verkaufslisten - nutzt bewusst die ohnehin
+// vorhandenen benutzer/zeitstempel-Daten statt eines neuen, separat zu
+// pflegenden Sperr-Felds. Kein Hard-Lock: nur ein Hinweis, mit dem
+// Schwellwert EDIT_WARNING_MS als "vermutlich noch aktiv" vs. "wahr-
+// scheinlich nur vergessen/verlassen" (siehe Chat-Absprache).
+const EDIT_WARNING_MS = 3 * 60 * 1000; // 3 Minuten
+function isBeingEditedByOther(cart) {
+  if (!cart || cart.status !== "OFFEN") return false;
+  if (!cart.bearbeiter || cart.bearbeiter === currentUser) return false;
+  const d = parseServerTimestamp(cart.zeitstempel);
+  if (!d) return false;
+  return (Date.now() - d.getTime()) < EDIT_WARNING_MS;
+}
+
 function isMessestandArtikel(sku) {
   if ((committed[sku] || 0) > 0) return true;
   const inv = inventur[sku];
@@ -4143,6 +4157,24 @@ function parkCart(uuid) {
   });
 }
 
+// Eigentliche Übernahme einer geparkten Liste - ausgelagert, damit sowohl
+// der direkte Weg (niemand anderes dran) als auch "Trotz Bearbeitung
+// übernehmen" (siehe btn-resume-cart) dieselbe Logik nutzen.
+function resumeCart(id, previousUuid, activeCart, fresh) {
+  if (previousUuid !== id && (activeCart.items.length > 0 || activeCart.kunde.name)) parkCart(previousUuid);
+  activeCartUuid = id;
+  fresh.status = "OFFEN";
+  touchSku(id);
+  sendWebhook("CART_HEADER_SET", {
+    cartUuid: id, status: "OFFEN",
+    kundeName: fresh.kunde.name, kundeEmail: fresh.kunde.email, kundeTelefon: fresh.kunde.telefon,
+    kundeLieferName: fresh.kunde.lieferName, kundeLieferFirma: fresh.kunde.lieferFirma,
+    kundeStrasse: fresh.kunde.strasse, kundePlzOrt: fresh.kunde.plzOrt, kundeNotiz: fresh.kunde.notiz,
+  });
+  saveUIState();
+  renderSales();
+}
+
 // ── VERKAUFSABSCHLUSS MIT ASANA-ÜBERGABE (v23) ─────────────────────────────
 const PAYMENT_METHODS = ["Bar", "EC-Karte", "Kreditkarte", "PayPal", "Zahlung ausstehend"];
 
@@ -4664,6 +4696,19 @@ function renderSalesListen(wrap) {
     startNewCartExplicit();
   });
 
+  // Warnt, falls diese Liste laut letzter Kopf-Zeile kürzlich von einem
+  // ANDEREN Nutzer angefasst wurde, ohne dass sie geparkt wurde - genau
+  // das Muster, das zum Datenverlust-Bug geführt hat (zwei Sitzungen
+  // gleichzeitig auf derselben Liste, ohne dass eine davon "Weiter"
+  // benutzt hat). Kein Hard-Lock, nur Sichtbarkeit.
+  if (isBeingEditedByOther(cart)) {
+    const d = parseServerTimestamp(cart.zeitstempel);
+    const minAgo = d ? Math.max(1, Math.round((Date.now() - d.getTime()) / 60000)) : "?";
+    wrap.insertAdjacentHTML("beforeend", `<div style="background:var(--warn-bg);border-radius:var(--r);padding:8px 10px;margin-bottom:10px;font-size:12px;color:var(--warn);display:flex;align-items:center;gap:6px;">
+      <i class="ti ti-alert-triangle"></i> Diese Liste wurde vor ${minAgo} Min. auch von ${cart.bearbeiter} bearbeitet - eventuell arbeitet ihr gerade gleichzeitig daran.
+    </div>`);
+  }
+
   const card = document.createElement("div");
   card.className = "card";
 
@@ -4973,18 +5018,29 @@ function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
         return;
       }
 
-      if (uuid !== id && (activeCart.items.length > 0 || activeCart.kunde.name)) parkCart(uuid);
-      activeCartUuid = id;
-      fresh.status = "OFFEN";
-      touchSku(id);
-      sendWebhook("CART_HEADER_SET", {
-        cartUuid: id, status: "OFFEN",
-        kundeName: fresh.kunde.name, kundeEmail: fresh.kunde.email, kundeTelefon: fresh.kunde.telefon,
-        kundeLieferName: fresh.kunde.lieferName, kundeLieferFirma: fresh.kunde.lieferFirma,
-        kundeStrasse: fresh.kunde.strasse, kundePlzOrt: fresh.kunde.plzOrt, kundeNotiz: fresh.kunde.notiz,
-      });
-      saveUIState();
-      renderSales();
+      // Kein Hard-Lock, nur ein deutlicher Hinweis - siehe Chat-Absprache:
+      // die Liste bleibt öffenbar, aber nicht unbemerkt. Nutzt bewusst
+      // btn/actionsZeile statt eines Dialogs, damit es sich nahtlos in
+      // die Zeile einfügt statt einen weiteren Modal-Layer aufzumachen.
+      if (isBeingEditedByOther(fresh)) {
+        const d = parseServerTimestamp(fresh.zeitstempel);
+        const minAgo = d ? Math.max(1, Math.round((Date.now() - d.getTime()) / 60000)) : "?";
+        const actionsRow = row.querySelector("div:last-child");
+        actionsRow.innerHTML = `
+          <div style="width:100%;background:var(--warn-bg);border-radius:var(--r);padding:8px 10px;font-size:12px;color:var(--warn);">
+            <div style="margin-bottom:6px;"><i class="ti ti-alert-triangle"></i> In Bearbeitung durch ${fresh.bearbeiter}, seit ${minAgo} Min.</div>
+            <div style="display:flex;gap:6px;">
+              <button class="btn-sm" id="btn-cancel-resume-${id}" style="flex:1;">Abbrechen</button>
+              <button class="btn-sm btn-danger" id="btn-force-resume-${id}" style="flex:1;">Trotz Bearbeitung übernehmen</button>
+            </div>
+            <div class="muted" style="font-size:10px;margin-top:4px;">Mögliche Änderungen der anderen Person gehen dabei eventuell verloren.</div>
+          </div>`;
+        qs(`#btn-cancel-resume-${id}`).addEventListener("click", () => renderSales());
+        qs(`#btn-force-resume-${id}`).addEventListener("click", () => resumeCart(id, uuid, activeCart, fresh));
+        return;
+      }
+
+      resumeCart(id, uuid, activeCart, fresh);
     });
     row.querySelector(".btn-delete-cart").addEventListener("click", () => {
       if (!confirm(`Verkaufsliste "${c.kunde.name || "Unbenannt"}" endgültig löschen?`)) return;
