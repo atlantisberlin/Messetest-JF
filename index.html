@@ -4929,9 +4929,19 @@ function renderSalesListen(wrap) {
     parkBtn.className = "btn btn-info";
     parkBtn.style.cssText = "width:100%;justify-content:center;margin-bottom:8px;";
     parkBtn.innerHTML = `<i class="ti ti-device-floppy"></i> Speichern &amp; parken`;
-    parkBtn.addEventListener("click", () => {
+    parkBtn.addEventListener("click", async () => {
       saveKunde();
       parkCart(uuid);
+      // v29-Fix: "Speichern & Parken" ist der Moment der Übergabe an
+      // jemand anderen - der normale 2-Sekunden-Debounce (siehe
+      // sendWebhook/scheduleDebouncedSync) reicht hier nicht, weil eine
+      // andere Sitzung u.U. SCHNELLER "Weiter" klickt, als die Änderung
+      // tatsächlich in BigQuery gelandet ist (genau das hat im Test von
+      // eben die Notiz "verschluckt"). syncNow() erzwingt das Absenden
+      // sofort, ohne auf den Timer zu warten.
+      parkBtn.disabled = true;
+      parkBtn.innerHTML = `<i class="ti ti-loader-2" style="animation:spin .8s linear infinite;"></i> Speichert…`;
+      await syncNow();
       showNotification("Verkaufsliste geparkt", "ok");
       activeCartUuid = null;
       saveUIState();
