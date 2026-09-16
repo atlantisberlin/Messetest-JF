@@ -4089,11 +4089,17 @@ function ensureActiveCart() {
 
 function createNewCart() {
   const uuid = genUUID();
-  carts[uuid] = { status: "OFFEN", kunde: { name: "", email: "", telefon: "", lieferName: "", lieferFirma: "", strasse: "", plzOrt: "", notiz: "" }, items: [] };
+  // v29-Fix: Vorher wurde hier SOFORT eine leere Kopf-Zeile nach BigQuery
+  // geschrieben, selbst wenn die Liste nie benutzt wird (z.B. weil ein
+  // Gerät einfach keine gültige lokale "aktive Liste" mehr hatte - neue
+  // Sitzung, Inkognito, gelöschter Speicher). Über 40 solcher leerer
+  // Listen hatten sich so in Testmesse angesammelt. _headerSynced ist ein
+  // rein lokales Flag (wird NIE mitgeschickt) - der erste echte Inhalt
+  // (Kundendaten oder Artikel) löst das erste Schreiben aus, siehe
+  // saveKunde() und saveCartItem().
+  carts[uuid] = { status: "OFFEN", _headerSynced: false, kunde: { name: "", email: "", telefon: "", lieferName: "", lieferFirma: "", strasse: "", plzOrt: "", notiz: "" }, items: [] };
   activeCartUuid = uuid;
   saveUIState();
-  touchSku(uuid);
-  sendWebhook("CART_HEADER_SET", { cartUuid: uuid, status: "OFFEN" });
   return uuid;
 }
 
@@ -4130,6 +4136,16 @@ function addToCart(art) {
 
 function saveCartItem(cartUuid, item) {
   touchSku(cartUuid);
+  const cart = carts[cartUuid];
+  if (cart && cart._headerSynced === false) {
+    cart._headerSynced = true;
+    sendWebhook("CART_HEADER_SET", {
+      cartUuid: cartUuid, status: cart.status,
+      kundeName: cart.kunde.name, kundeEmail: cart.kunde.email, kundeTelefon: cart.kunde.telefon,
+      kundeLieferName: cart.kunde.lieferName, kundeLieferFirma: cart.kunde.lieferFirma,
+      kundeStrasse: cart.kunde.strasse, kundePlzOrt: cart.kunde.plzOrt, kundeNotiz: cart.kunde.notiz,
+    });
+  }
   sendWebhook("CART_ITEM_SET", {
     cartUuid, sku: item.sku, ean: item.ean, artName: item.name,
     qty: item.qty, price: item.price, lieferart: item.lieferart,
@@ -4884,6 +4900,7 @@ function renderSalesListen(wrap) {
     cart.kunde.plzOrt      = qs("#cart-kunde-plzort")?.value.trim() || "";
     cart.kunde.notiz       = qs("#cart-kunde-notiz")?.value.trim() || "";
     touchSku(uuid);
+    cart._headerSynced = true;
     sendWebhook("CART_HEADER_SET", {
       cartUuid: uuid, status: cart.status,
       kundeName: cart.kunde.name, kundeEmail: cart.kunde.email, kundeTelefon: cart.kunde.telefon,
@@ -4949,11 +4966,20 @@ function renderSalesListen(wrap) {
   }
   wrap.appendChild(actionsWrap);
 
-  const allParked = Object.keys(carts).filter(id => carts[id].status === "GEPARKT" && id !== uuid);
+  // Zeigt jetzt auch OFFEN-Warenkörbe anderer Sitzungen, nicht nur
+  // GEPARKT - sonst sind Listen, die auf einem anderen Gerät "aktiv"
+  // sind, für alle anderen Geräte komplett unsichtbar (siehe Chat-Fund:
+  // 40+ Warenkörbe in BigQuery, die nirgends in der App auftauchten).
+  // Komplett leere, nie benutzte Listen werden ausgeblendet - reines
+  // Rauschen ohne Wert für die Übersicht.
+  const allParked = Object.keys(carts).filter(id =>
+    (carts[id].status === "GEPARKT" || carts[id].status === "OFFEN") &&
+    id !== uuid && (carts[id].items.length > 0 || carts[id].kunde.name)
+  );
   if (allParked.length > 0) {
     const hdr = document.createElement("div");
     hdr.style.cssText = "font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin:20px 0 8px;";
-    hdr.textContent = "Geparkte Verkaufslisten";
+    hdr.textContent = "Andere Verkaufslisten";
     wrap.appendChild(hdr);
 
     if (allParked.length > 2) {
@@ -4990,6 +5016,7 @@ function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
   parked.forEach(id => {
     const c = carts[id];
     const total = c.items.reduce((s, i) => s + i.qty * i.price, 0);
+    const statusLabel = c.status === "OFFEN" ? "Aktiv bei" : "Geparkt von";
     const row = document.createElement("div");
     row.className = "card";
     row.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:8px;";
@@ -4997,6 +5024,7 @@ function renderParkedCartsResults(resultsDiv, allParked, uuid, activeCart) {
       <div style="min-width:0;">
         <div style="font-weight:500;font-size:14px;">${c.kunde.name || "Unbenannt"}</div>
         <div class="muted">${c.items.length} Artikel · ${fmtEur(total)}</div>
+        <div class="muted" style="font-size:11px;">${statusLabel}: ${c.bearbeiter || "-"}</div>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
         <button class="btn-sm btn-resume-cart"><i class="ti ti-chevron-right"></i> Weiter</button>
