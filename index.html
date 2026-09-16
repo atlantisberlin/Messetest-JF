@@ -372,6 +372,24 @@ const COL = {
 
 const qs = s => document.querySelector(s);
 
+// Kein einziger fetch()-Aufruf im Tool hatte bisher einen Timeout - bei
+// einer instabilen Messe-WLAN-/Mobilfunk-Verbindung kann eine hängende
+// Anfrage dadurch MINUTENLANG auf eine Antwort warten, die nie kommt,
+// statt schnell fehlzuschlagen und den bestehenden Fehler-/Fallback-Pfad
+// greifen zu lassen. AbortController erzwingt hier eine harte Obergrenze.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("Zeitüberschreitung nach " + Math.round(timeoutMs/1000) + "s - keine Antwort vom Server.");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // "Artikel Messestand"/"Nur Messestand-Artikel" - ein Artikel gilt als am
 // Stand, wenn er ENTWEDER kommissioniert wurde ODER bereits eine
 // Inventur-Zählung existiert (z.B. Direktlieferung an den Stand, ohne
@@ -519,7 +537,7 @@ let refreshTimer = null;
 async function loadMessenConfig() {
   if (!WEBHOOK_URL || !getAuthToken()) return;
   try {
-    const resp = await fetch(authUrl(WEBHOOK_URL + "?action=messen_config_get"));
+    const resp = await fetchWithTimeout(authUrl(WEBHOOK_URL + "?action=messen_config_get"));
     const json = await resp.json();
     if (json.ok) messenConfig = json.config || [];
   } catch(e) { console.warn("loadMessenConfig:", e); }
@@ -539,17 +557,24 @@ function applyMesseTheme(name) {
 }
 
 async function fetchMergedMessenList() {
-  await loadMessenConfig();
+  // Beide Anfragen sind unabhängig voneinander - parallel statt
+  // nacheinander laufen lassen, das halbiert die Wartezeit für diesen
+  // Schritt auf einer normalen Verbindung.
   let bqMessen = [];
   let bqFailed = false;
-  if (WEBHOOK_URL) {
-    try {
-      const resp = await fetch(authUrl(WEBHOOK_URL + "?action=messen"));
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      const json = await resp.json();
-      bqMessen = json.messen || [];
-    } catch(e) { console.warn("fetchMergedMessenList:", e); bqFailed = true; }
-  }
+  const [, bqResult] = await Promise.all([
+    loadMessenConfig(),
+    (async () => {
+      if (!WEBHOOK_URL) return null;
+      try {
+        const resp = await fetchWithTimeout(authUrl(WEBHOOK_URL + "?action=messen"));
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return await resp.json();
+      } catch(e) { console.warn("fetchMergedMessenList:", e); return { __failed: true }; }
+    })(),
+  ]);
+  if (bqResult && bqResult.__failed) { bqFailed = true; } else if (bqResult) { bqMessen = bqResult.messen || []; }
+
   const seen = new Set();
   const merged = [];
   messenConfig.forEach(m => { merged.push({ name: m.name, bg: m.bg, fg: m.fg, erstellt: null }); seen.add(m.name); });
@@ -618,10 +643,31 @@ async function selectMesse(name) {
   saveUIState();
   planned = {}; committed = {}; commitLog = {}; commitDone = {}; preise = {}; preisCodeCache = {};
   carts = {}; activeCartUuid = null; bestellt = {}; inventur = {};
+
+  // Sichtbarer Ladebalken statt einer kurz blinkenden Meldung - das
+  // eigentliche Laden kann deutlich länger als 3s dauern (Messe-WLAN),
+  // und ohne durchgehende Rückmeldung wirkt es so, als würde nichts
+  // passieren, obwohl im Hintergrund noch gearbeitet wird.
+  showLoading();
+  setLoadingStep(`Lade "${name}"…`, 30);
+  try {
+    if (getAuthRole() === "verkauf") {
+      setLoadingStep("Lade Verkaufslisten…", 50);
+      await loadCartsOnly();
+    } else {
+      setLoadingStep("Lade Kommissionierungsstand…", 50);
+      await loadRemoteState(true);
+    }
+    setLoadingStep("Fertig…", 95);
+    await sleep(100);
+  } finally {
+    hideLoading();
+  }
+
   showNotification(`Messe "${name}" ausgewählt`, "ok");
-  await loadRemoteState(false);
   startAutoRefresh();
   renderView();
+  if (getAuthRole() === "verkauf") loadStateOnly();
 }
 
 qs("#btn-switch-messe").addEventListener("click", () => showMesseDialog());
@@ -688,7 +734,7 @@ async function saveMessenConfigToServer() {
   try {
     const url = WEBHOOK_URL + "?action=messen_config_save&token=" + encodeURIComponent(getAuthToken()) +
       "&list=" + encodeURIComponent(JSON.stringify(rows));
-    const resp = await fetch(url);
+    const resp = await fetchWithTimeout(url);
     const json = await resp.json();
     if (json.ok) {
       messenConfig = json.config || rows;
@@ -709,7 +755,7 @@ async function saveMessenConfigToServer() {
 async function loadInventurLagerplaetzeList(onDone) {
   if (!WEBHOOK_URL) return;
   try {
-    const resp = await fetch(authUrl(WEBHOOK_URL + "?action=inventur_lagerplaetze_get"));
+    const resp = await fetchWithTimeout(authUrl(WEBHOOK_URL + "?action=inventur_lagerplaetze_get"));
     const json = await resp.json();
     if (json.ok) inventurLagerplaetze = json.lagerplaetze || [];
   } catch(e) { console.warn("loadInventurLagerplaetzeList:", e); }
@@ -748,7 +794,7 @@ async function saveLagerplaetzeToServer() {
   try {
     const url = WEBHOOK_URL + "?action=inventur_lagerplaetze_save&token=" + encodeURIComponent(getAuthToken()) +
       "&list=" + encodeURIComponent(JSON.stringify(names));
-    const resp = await fetch(url);
+    const resp = await fetchWithTimeout(url);
     const json = await resp.json();
     if (json.ok) {
       inventurLagerplaetze = json.lagerplaetze || names;
@@ -920,12 +966,12 @@ async function syncNow() {
   updateSyncStatusUI();
 
   try {
-    await fetch(WEBHOOK_URL, {
+    await fetchWithTimeout(WEBHOOK_URL, {
       method:  "POST",
       mode:    "no-cors",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body:    (() => { const b = JSON.stringify({ action: "BATCH", token: getAuthToken(), messe: messeLabel, user: currentUser, items: pending.map(q => ({ action: q.action, ...q.payload, uuid: q.localId })) }); console.log("SYNC BODY:", b); return b; })(),
-    });
+    }, 15000);
 
     const sentIds = new Set(pending.map(q => q.localId));
     syncQueue = syncQueue.filter(q => !sentIds.has(q.localId));
@@ -1021,7 +1067,7 @@ async function loadCartsOnly() {
   if (!WEBHOOK_URL) return;
   try {
     const url  = authUrl(WEBHOOK_URL + "?action=load_carts&messe=" + encodeURIComponent(messeLabel));
-    const resp = await fetch(url);
+    const resp = await fetchWithTimeout(url);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const json = await resp.json();
     if (!json.ok) {
@@ -1053,7 +1099,7 @@ async function loadStateOnly() {
   if (!WEBHOOK_URL) return;
   try {
     const url  = authUrl(WEBHOOK_URL + "?action=load_state&messe=" + encodeURIComponent(messeLabel));
-    const resp = await fetch(url);
+    const resp = await fetchWithTimeout(url);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const json = await resp.json();
     if (!json.ok) {
@@ -1136,7 +1182,7 @@ async function loadRemoteState(silent = false) {
   if (!silent) showNotification("Lade aktuellen Stand…", "ok");
   try {
     const url  = authUrl(WEBHOOK_URL + "?action=load&messe=" + encodeURIComponent(messeLabel));
-    const resp = await fetch(url);
+    const resp = await fetchWithTimeout(url);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const json = await resp.json();
     if (!json.ok) {
@@ -1379,7 +1425,7 @@ async function attemptLogin() {
   statusEl.textContent = "Prüfe…";
   try {
     const url  = WEBHOOK_URL + "?action=login&pin=" + encodeURIComponent(pin) + "&deviceId=" + encodeURIComponent(getDeviceId());
-    const resp = await fetch(url);
+    const resp = await fetchWithTimeout(url);
     const json = await resp.json();
     if (json.ok) {
       setAuth(json.token, json.role);
@@ -1462,7 +1508,7 @@ function getCacheInfo() { return null; }
 // nicht versehentlich eine alte Browser-/CDN-Kopie verwendet wird.
 async function tryLoadCatalogFromGitHub() {
   try {
-    const resp = await fetch(CATALOG_JSON_URL + "?_=" + Date.now(), { cache: "no-store" });
+    const resp = await fetchWithTimeout(CATALOG_JSON_URL + "?_=" + Date.now(), { cache: "no-store" });
     if (!resp.ok) return false;
     const json = await resp.json();
     if (!json || !Array.isArray(json.articles) || json.articles.length === 0) return false;
@@ -1534,7 +1580,7 @@ async function loadArticles(forceReload = false) {
       qs("#loading-bar") && (qs("#loading-bar").style.width = fakeProgress + "%");
     }, 300);
 
-    const resp = await fetch(authUrl(WEBHOOK_URL + "?action=articles_basic"));
+    const resp = await fetchWithTimeout(authUrl(WEBHOOK_URL + "?action=articles_basic"));
     clearInterval(progressInterval);
 
     if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -1603,7 +1649,7 @@ async function ensureDetailsLoaded(skus, onUpdate) {
     for (let i = 0; i < missing.length; i += batchSize) {
       const batch = missing.slice(i, i + batchSize);
       const url = authUrl(WEBHOOK_URL + "?action=articles_detail&skus=" + encodeURIComponent(batch.join(",")));
-      const resp = await fetch(url);
+      const resp = await fetchWithTimeout(url);
       if (!resp.ok) { console.warn("[Details] HTTP-Fehler", resp.status, "für Batch", i); continue; }
       const json = await resp.json();
       if (!json.ok) {
@@ -1662,7 +1708,7 @@ async function ensureRivalsLoaded(skus, onUpdate) {
     for (let i = 0; i < missing.length; i += batchSize) {
       const batch = missing.slice(i, i + batchSize);
       const url = authUrl(WEBHOOK_URL + "?action=articles_rivals&skus=" + encodeURIComponent(batch.join(",")));
-      const resp = await fetch(url);
+      const resp = await fetchWithTimeout(url);
       if (!resp.ok) { console.warn("[Rivals] HTTP-Fehler", resp.status, "für Batch", i); continue; }
       const json = await resp.json();
       if (!json.ok) {
@@ -1712,7 +1758,7 @@ async function ensureCostPricesLoaded(skus, onUpdate) {
     for (let i = 0; i < missing.length; i += batchSize) {
       const batch = missing.slice(i, i + batchSize);
       const url = authUrl(WEBHOOK_URL + "?action=articles_costprices&skus=" + encodeURIComponent(batch.join(",")));
-      const resp = await fetch(url);
+      const resp = await fetchWithTimeout(url);
       if (!resp.ok) { console.warn("[CostPrices] HTTP-Fehler", resp.status, "für Batch", i); continue; }
       const json = await resp.json();
       if (!json.ok) {
@@ -4269,11 +4315,11 @@ async function submitSaleComplete() {
   };
 
   try {
-    const resp = await fetch(WEBHOOK_URL, {
+    const resp = await fetchWithTimeout(WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify(payload),
-    });
+    }, 30000);
     const json = await resp.json();
     if (!json.ok) throw new Error(json.error || "Unbekannter Fehler");
 
@@ -4369,7 +4415,7 @@ async function renderJournal() {
   }
 
   try {
-    const resp = await fetch(authUrl(WEBHOOK_URL + "?action=activity_journal&messe=" + encodeURIComponent(messeLabel)));
+    const resp = await fetchWithTimeout(authUrl(WEBHOOK_URL + "?action=activity_journal&messe=" + encodeURIComponent(messeLabel)));
     const json = await resp.json();
     if (!json.ok) {
       wrap.innerHTML = `<div class="muted" style="text-align:center;padding:20px 0;color:var(--err);">Fehler: ${json.error || "unbekannt"}</div>`;
@@ -5079,7 +5125,7 @@ function sendPlanWebhook(sku, oldQty, newQty, art) {
 async function loadPinStatus() {
   try {
     const url  = authUrl(WEBHOOK_URL + "?action=settings_get_status");
-    const resp = await fetch(url);
+    const resp = await fetchWithTimeout(url);
     const json = await resp.json();
     if (!json.ok) return;
     Object.keys(json.pinsSet || {}).forEach(r => {
@@ -5109,7 +5155,7 @@ async function savePins() {
   try {
     const params = new URLSearchParams({ action: "settings_update_pins", token: getAuthToken() });
     Object.keys(pins).forEach(r => params.set(r, pins[r]));
-    const resp = await fetch(WEBHOOK_URL + "?" + params.toString());
+    const resp = await fetchWithTimeout(WEBHOOK_URL + "?" + params.toString());
     const json = await resp.json();
     if (json.ok) {
       statusEl.style.color = "var(--ok)";
@@ -5289,7 +5335,7 @@ qs("#btn-test-webhook").addEventListener("click", async () => {
   if (!url) { status.textContent = "Bitte zuerst eine URL eingeben."; status.style.color = "var(--err)"; return; }
   status.textContent = "Teste…"; status.style.color = "var(--text2)";
   try {
-    const resp = await fetch(url + "?action=ping");
+    const resp = await fetchWithTimeout(url + "?action=ping");
     const json = await resp.json();
     status.textContent = json.ok ? "✓ " + (json.msg || "Verbunden") : "✗ " + json.error;
     status.style.color = json.ok ? "var(--ok)" : "var(--err)";
