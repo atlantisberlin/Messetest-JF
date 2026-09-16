@@ -611,7 +611,7 @@ async function fetchMergedMessenList() {
 
   const seen = new Set();
   const merged = [];
-  messenConfig.forEach(m => { merged.push({ name: m.name, bg: m.bg, fg: m.fg, erstellt: null }); seen.add(m.name); });
+  messenConfig.forEach(m => { merged.push({ name: m.name, bg: m.bg, fg: m.fg, asanaProjectGid: m.asanaProjectGid, erstellt: null }); seen.add(m.name); });
   bqMessen.forEach(m => {
     if (seen.has(m.name)) return;
     merged.push({ name: m.name, bg: "#185fa5", fg: "#ffffff", erstellt: m.erstellt });
