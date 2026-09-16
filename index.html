@@ -4513,7 +4513,7 @@ async function renderAuswertung() {
       const tagKey   = d ? d.toISOString().slice(0, 10) : "unbekannt";
       const tagLabel = d ? d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }) : "Unbekannt";
 
-      if (!perSale[r.uuid]) perSale[r.uuid] = { total: 0 };
+      if (!perSale[r.uuid]) perSale[r.uuid] = { total: 0, belegStatus: r.belegStatus };
       perSale[r.uuid].total += lineTotal;
 
       if (!byDay[tagKey]) byDay[tagKey] = { label: tagLabel, revenue: 0 };
@@ -4532,6 +4532,7 @@ async function renderAuswertung() {
     const totalRevenue = Object.values(perSale).reduce((s, x) => s + x.total, 0);
     const totalSales   = Object.keys(perSale).length;
     const avgSale       = totalSales > 0 ? totalRevenue / totalSales : 0;
+    const belegFehler   = Object.values(perSale).filter(s => s.belegStatus === "FEHLER").length;
 
     const cardsWrap = document.createElement("div");
     cardsWrap.style.cssText = "display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:18px;";
@@ -4544,6 +4545,12 @@ async function renderAuswertung() {
       <div style="font-size:17px;font-weight:700;">${c.value}</div>
     </div>`).join("");
     wrap.appendChild(cardsWrap);
+
+    if (belegFehler > 0) {
+      wrap.insertAdjacentHTML("beforeend", `<div style="background:var(--warn-bg);border-radius:var(--r);padding:8px 10px;margin-bottom:14px;font-size:12px;color:var(--warn);display:flex;align-items:center;gap:6px;">
+        <i class="ti ti-alert-triangle"></i> Beleg-Druck bei ${belegFehler} Verkauf${belegFehler === 1 ? "" : "en"} fehlgeschlagen - Verkauf wurde trotzdem abgeschlossen.
+      </div>`);
+    }
 
     const dayTitle = document.createElement("div");
     dayTitle.className = "merkliste-title";
