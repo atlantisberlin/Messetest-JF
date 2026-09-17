@@ -4223,7 +4223,7 @@ function addToCart(art) {
     const inStock = (committed[art.sku] || 0) > 0;
     const item = {
       sku: art.sku, lineId: genUUID(), ean: art.ean || "", name: art.name,
-      qty: 1, price: price,
+      qty: 1, price: price, hinweis: "",
       lieferart: inStock ? "mitnahme" : "versand",
     };
     cart.items.push(item);
@@ -4266,7 +4266,7 @@ function saveCartItem(cartUuid, item) {
   }
   sendWebhook("CART_ITEM_SET", {
     cartUuid, sku: item.sku, lineId: item.lineId, ean: item.ean, artName: item.name,
-    qty: item.qty, price: item.price, lieferart: item.lieferart,
+    qty: item.qty, price: item.price, lieferart: item.lieferart, hinweis: item.hinweis || "",
   });
 }
 
@@ -4477,7 +4477,7 @@ async function submitSaleComplete() {
     messe: messeLabel,
     user: currentUser,
     cartUuid: saleCompleteCartUuid,
-    items: cart.items.map(i => ({ sku: i.sku, ean: i.ean, name: i.name, qty: i.qty, price: i.price, lieferart: i.lieferart })),
+    items: cart.items.map(i => ({ sku: i.sku, ean: i.ean, name: i.name, qty: i.qty, price: i.price, lieferart: i.lieferart, hinweis: i.hinweis || "" })),
     kunde: cart.kunde,
     paymentMethod: saleCompletePaymentMethod,
     photoBase64: saleCompletePhotoBase64,
@@ -4920,10 +4920,20 @@ function renderSalesListen(wrap) {
               <input type="number" min="0" step="1" class="cart-price-inp" data-line-id="${item.lineId}" value="${item.price}" style="width:100%;" />
             </div>
           </div>
-          <div style="display:flex;gap:6px;">
+          <div style="display:flex;gap:6px;margin-bottom:8px;">
             <button class="btn-sm cart-lieferart-btn ${item.lieferart === "mitnahme" ? "btn-info" : ""}" data-line-id="${item.lineId}" data-art="mitnahme"><i class="ti ti-shopping-bag"></i> Mitnahme</button>
             <button class="btn-sm cart-lieferart-btn ${item.lieferart === "versand" ? "btn-info" : ""}" data-line-id="${item.lineId}" data-art="versand"><i class="ti ti-truck"></i> Versand</button>
-          </div>`;
+          </div>
+          ${item.hinweis ? `
+          <div>
+            <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Hinweis (z.B. für Versand-Kollegen)</label>
+            <input type="text" class="cart-hinweis-inp" data-line-id="${item.lineId}" value="${item.hinweis.replace(/"/g,"&quot;")}" style="width:100%;" />
+          </div>` : `
+          <button class="btn-sm btn-toggle-hinweis" data-line-id="${item.lineId}" style="border:none;background:none;padding:2px 0;color:var(--text2);"><i class="ti ti-plus"></i> Hinweis hinzufügen</button>
+          <div class="cart-hinweis-wrap" data-line-id="${item.lineId}" style="display:none;margin-top:6px;">
+            <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Hinweis (z.B. für Versand-Kollegen)</label>
+            <input type="text" class="cart-hinweis-inp" data-line-id="${item.lineId}" value="" style="width:100%;" />
+          </div>`}`;
       }
       card.appendChild(row);
     });
@@ -4958,6 +4968,19 @@ function renderSalesListen(wrap) {
     item.lieferart = b.dataset.art;
     saveCartItem(uuid, item);
     renderSales();
+  }));
+  card.querySelectorAll(".btn-toggle-hinweis").forEach(b => b.addEventListener("click", () => {
+    const wrap = card.querySelector(`.cart-hinweis-wrap[data-line-id="${b.dataset.lineId}"]`);
+    if (!wrap) return;
+    wrap.style.display = "block";
+    b.style.display = "none";
+    wrap.querySelector(".cart-hinweis-inp").focus();
+  }));
+  card.querySelectorAll(".cart-hinweis-inp").forEach(inp => inp.addEventListener("change", () => {
+    const item = cart.items.find(i => i.lineId === inp.dataset.lineId);
+    if (!item) return;
+    item.hinweis = inp.value.trim();
+    saveCartItem(uuid, item);
   }));
 
   const adjWrap = document.createElement("div");
@@ -5519,6 +5542,7 @@ function sendWebhook(action, data) {
       payload.qty       = data.qty   || 0;
       payload.price     = data.price || 0;
       payload.lieferart = data.lieferart || "mitnahme";
+      payload.hinweis   = data.hinweis || "";
       break;
     case "CART_ITEM_REMOVE":
       payload.cartUuid = data.cartUuid;
