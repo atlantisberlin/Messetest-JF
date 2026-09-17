@@ -4222,7 +4222,7 @@ function addToCart(art) {
     const price = p.messe > 0 ? p.messe : Math.round(art.price || 0);
     const inStock = (committed[art.sku] || 0) > 0;
     const item = {
-      sku: art.sku, ean: art.ean || "", name: art.name,
+      sku: art.sku, lineId: genUUID(), ean: art.ean || "", name: art.name,
       qty: 1, price: price,
       lieferart: inStock ? "mitnahme" : "versand",
     };
@@ -4230,6 +4230,25 @@ function addToCart(art) {
     saveCartItem(uuid, item);
   }
   showNotification(`${art.name} zur Verkaufsliste hinzugefügt`, "ok");
+  renderSales();
+}
+
+// Spaltet die angegebene Zeile in zwei eigenständige Zeilen auf (z.B. um
+// von 2x Mitnahme zu 1x Mitnahme + 1x Versand zu wechseln) - funktioniert
+// für jeden Artikel, nicht nur bei Menge > 1: Ist die Menge bereits 1,
+// wird die Zeile einfach dupliziert (zwei getrennte 1er-Zeilen).
+function splitCartLine(cartUuid, lineId) {
+  const cart = carts[cartUuid];
+  if (!cart) return;
+  const item = cart.items.find(i => i.lineId === lineId);
+  if (!item) return;
+  if (item.qty > 1) {
+    item.qty -= 1;
+    saveCartItem(cartUuid, item);
+  }
+  const newItem = { ...item, lineId: genUUID(), qty: 1 };
+  cart.items.push(newItem);
+  saveCartItem(cartUuid, newItem);
   renderSales();
 }
 
@@ -4246,17 +4265,18 @@ function saveCartItem(cartUuid, item) {
     });
   }
   sendWebhook("CART_ITEM_SET", {
-    cartUuid, sku: item.sku, ean: item.ean, artName: item.name,
+    cartUuid, sku: item.sku, lineId: item.lineId, ean: item.ean, artName: item.name,
     qty: item.qty, price: item.price, lieferart: item.lieferart,
   });
 }
 
-function removeCartItem(cartUuid, sku) {
+function removeCartItem(cartUuid, lineId) {
   const cart = carts[cartUuid];
   if (!cart) return;
-  cart.items = cart.items.filter(i => i.sku !== sku);
+  const item = cart.items.find(i => i.lineId === lineId);
+  cart.items = cart.items.filter(i => i.lineId !== lineId);
   touchSku(cartUuid);
-  sendWebhook("CART_ITEM_REMOVE", { cartUuid, sku });
+  sendWebhook("CART_ITEM_REMOVE", { cartUuid, sku: item ? item.sku : "", lineId });
 }
 
 function parkCart(uuid) {
@@ -4846,10 +4866,18 @@ function renderSalesListen(wrap) {
       Noch keine Artikel. In der Preisliste "Zur Verkaufsliste hinzufügen" nutzen.
     </div>`;
   } else {
+    // v33: Erkennt, wenn eine SKU mehrfach als eigene Zeile in dieser
+    // Liste vorkommt (z.B. 1x Mitnahme + 1x Versand) - diese Zeilen
+    // bekommen eine gelbe Hervorhebung, damit es nicht übersehen wird.
+    const skuCounts = {};
+    cart.items.forEach(it => { skuCounts[it.sku] = (skuCounts[it.sku] || 0) + 1; });
+
     cart.items.forEach((item, i) => {
       const isAdj = item.lieferart === "anpassung";
+      const isDuplicateSku = !isAdj && skuCounts[item.sku] > 1;
       const row = document.createElement("div");
-      row.style.cssText = i > 0 ? "border-top:0.5px solid var(--border);padding-top:12px;margin-top:12px;" : "";
+      row.style.cssText = (i > 0 ? "border-top:0.5px solid var(--border);padding-top:12px;margin-top:12px;" : "") +
+        (isDuplicateSku ? "background:var(--warn-bg);border-radius:var(--r);padding:10px;" : "");
 
       if (isAdj) {
         row.innerHTML = `
@@ -4858,18 +4886,24 @@ function renderSalesListen(wrap) {
               <i class="ti ti-tag" style="font-size:14px;color:var(--text2);flex-shrink:0;"></i>
               <div style="font-size:14px;font-weight:500;">${item.name}</div>
             </div>
-            <button class="btn-sm btn-danger btn-remove-item" data-sku="${item.sku}" style="flex-shrink:0;"><i class="ti ti-trash"></i></button>
+            <button class="btn-sm btn-danger btn-remove-item" data-line-id="${item.lineId}" style="flex-shrink:0;"><i class="ti ti-trash"></i></button>
           </div>
           <div>
             <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Betrag (€, negativ für Abzug)</label>
-            <input type="number" step="1" class="cart-price-inp" data-sku="${item.sku}" value="${item.price}" style="width:100%;" />
+            <input type="number" step="1" class="cart-price-inp" data-line-id="${item.lineId}" value="${item.price}" style="width:100%;" />
           </div>`;
       } else {
         const p = preise[item.sku] || {};
         row.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;gap:8px;">
-            <div style="font-size:14px;font-weight:500;flex:1;min-width:0;">${item.name}</div>
-            <button class="btn-sm btn-danger btn-remove-item" data-sku="${item.sku}" style="flex-shrink:0;"><i class="ti ti-trash"></i></button>
+            <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+              ${isDuplicateSku ? '<i class="ti ti-alert-triangle" style="font-size:13px;color:var(--warn);flex-shrink:0;" title="Diese SKU kommt mehrfach in dieser Liste vor"></i>' : ""}
+              <div style="font-size:14px;font-weight:500;">${item.name}</div>
+            </div>
+            <div style="display:flex;gap:4px;flex-shrink:0;">
+              <button class="btn-sm btn-split-item" data-line-id="${item.lineId}" title="Als eigene Zeile aufteilen"><i class="ti ti-git-branch"></i></button>
+              <button class="btn-sm btn-danger btn-remove-item" data-line-id="${item.lineId}"><i class="ti ti-trash"></i></button>
+            </div>
           </div>
           <div class="muted" style="margin-bottom:8px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
             <span>SKU: ${item.sku}</span>
@@ -4879,16 +4913,16 @@ function renderSalesListen(wrap) {
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
             <div>
               <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Menge</label>
-              <input type="number" min="1" step="1" class="cart-qty-inp" data-sku="${item.sku}" value="${item.qty}" style="width:100%;" />
+              <input type="number" min="1" step="1" class="cart-qty-inp" data-line-id="${item.lineId}" value="${item.qty}" style="width:100%;" />
             </div>
             <div>
               <label class="muted" style="font-size:11px;display:block;margin-bottom:3px;">Verkaufspreis</label>
-              <input type="number" min="0" step="1" class="cart-price-inp" data-sku="${item.sku}" value="${item.price}" style="width:100%;" />
+              <input type="number" min="0" step="1" class="cart-price-inp" data-line-id="${item.lineId}" value="${item.price}" style="width:100%;" />
             </div>
           </div>
           <div style="display:flex;gap:6px;">
-            <button class="btn-sm cart-lieferart-btn ${item.lieferart === "mitnahme" ? "btn-info" : ""}" data-sku="${item.sku}" data-art="mitnahme"><i class="ti ti-shopping-bag"></i> Mitnahme</button>
-            <button class="btn-sm cart-lieferart-btn ${item.lieferart === "versand" ? "btn-info" : ""}" data-sku="${item.sku}" data-art="versand"><i class="ti ti-truck"></i> Versand</button>
+            <button class="btn-sm cart-lieferart-btn ${item.lieferart === "mitnahme" ? "btn-info" : ""}" data-line-id="${item.lineId}" data-art="mitnahme"><i class="ti ti-shopping-bag"></i> Mitnahme</button>
+            <button class="btn-sm cart-lieferart-btn ${item.lieferart === "versand" ? "btn-info" : ""}" data-line-id="${item.lineId}" data-art="versand"><i class="ti ti-truck"></i> Versand</button>
           </div>`;
       }
       card.appendChild(row);
@@ -4897,18 +4931,21 @@ function renderSalesListen(wrap) {
   wrap.appendChild(card);
 
   card.querySelectorAll(".btn-remove-item").forEach(b => b.addEventListener("click", () => {
-    removeCartItem(uuid, b.dataset.sku);
+    removeCartItem(uuid, b.dataset.lineId);
     renderSales();
   }));
+  card.querySelectorAll(".btn-split-item").forEach(b => b.addEventListener("click", () => {
+    splitCartLine(uuid, b.dataset.lineId);
+  }));
   card.querySelectorAll(".cart-qty-inp").forEach(inp => inp.addEventListener("change", () => {
-    const item = cart.items.find(i => i.sku === inp.dataset.sku);
+    const item = cart.items.find(i => i.lineId === inp.dataset.lineId);
     if (!item) return;
     item.qty = Math.max(1, parseInt(inp.value) || 1);
     saveCartItem(uuid, item);
     renderSales();
   }));
   card.querySelectorAll(".cart-price-inp").forEach(inp => inp.addEventListener("change", () => {
-    const item = cart.items.find(i => i.sku === inp.dataset.sku);
+    const item = cart.items.find(i => i.lineId === inp.dataset.lineId);
     if (!item) return;
     const raw = parseInt(inp.value, 10);
     item.price = (item.lieferart === "anpassung") ? (isNaN(raw) ? 0 : raw) : Math.max(0, raw || 0);
@@ -4916,7 +4953,7 @@ function renderSalesListen(wrap) {
     renderSales();
   }));
   card.querySelectorAll(".cart-lieferart-btn").forEach(b => b.addEventListener("click", () => {
-    const item = cart.items.find(i => i.sku === b.dataset.sku);
+    const item = cart.items.find(i => i.lineId === b.dataset.lineId);
     if (!item) return;
     item.lieferart = b.dataset.art;
     saveCartItem(uuid, item);
@@ -4947,7 +4984,7 @@ function renderSalesListen(wrap) {
       return;
     }
     const fakeSku = "anpassung_" + genUUID();
-    const item = { sku: fakeSku, ean: "", name: note, qty: 1, price: amount, lieferart: "anpassung" };
+    const item = { sku: fakeSku, lineId: fakeSku, ean: "", name: note, qty: 1, price: amount, lieferart: "anpassung" };
     cart.items.push(item);
     saveCartItem(uuid, item);
     renderSales();
@@ -5478,12 +5515,14 @@ function sendWebhook(action, data) {
       break;
     case "CART_ITEM_SET":
       payload.cartUuid  = data.cartUuid;
+      payload.lineId    = data.lineId || data.sku || "";
       payload.qty       = data.qty   || 0;
       payload.price     = data.price || 0;
       payload.lieferart = data.lieferart || "mitnahme";
       break;
     case "CART_ITEM_REMOVE":
       payload.cartUuid = data.cartUuid;
+      payload.lineId   = data.lineId || data.sku || "";
       break;
     case "CART_COMPLETE":
       payload.cartUuid = data.cartUuid;
@@ -5505,7 +5544,7 @@ function sendWebhook(action, data) {
   const debounceKey =
     (action === "PLAN_SET" || action === "REMOVE") ? "plan:" + sku :
     (action === "INVENTUR_SET") ? "inventur:" + sku + ":" + (data.ref || "") :
-    (action === "CART_ITEM_SET")   ? "cartitem:" + data.cartUuid + ":" + sku :
+    (action === "CART_ITEM_SET")   ? "cartitem:" + data.cartUuid + ":" + (data.lineId || sku) :
     (action === "CART_HEADER_SET") ? "cartheader:" + data.cartUuid :
     null;
 
